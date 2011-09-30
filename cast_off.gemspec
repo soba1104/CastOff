@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name		      = "cast_off"
-  spec.version		      = "0.0.1"
+  spec.version		      = "0.1.0"
   spec.platform		      = Gem::Platform::RUBY
   spec.summary		      = "performance improvement tool for Ruby1.9.3"
   spec.description	      = <<-EOS
