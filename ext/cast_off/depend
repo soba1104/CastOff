@@ -1,0 +1,70 @@
+$(srcdir)/generated_c_include/unbox_api.h:	\
+  $(srcdir)/generated_c_include/unbox_api.h.rb
+	$(ruby) -- $(srcdir)/generated_c_include/unbox_api.h.rb > $@
+
+
+cast_off.c:					\
+  $(srcdir)/ruby_source/debug.h			\
+  $(srcdir)/ruby_source/gc.h			\
+  $(srcdir)/ruby_source/id.h			\
+  $(srcdir)/ruby_source/eval_intern.h		\
+  $(srcdir)/ruby_source/iseq.h			\
+  $(srcdir)/ruby_source/method.h		\
+  $(srcdir)/ruby_source/node.h			\
+  $(srcdir)/ruby_source/thread_pthread.h	\
+  $(srcdir)/ruby_source/thread_win32.h		\
+  $(srcdir)/ruby_source/vm_core.h		\
+  $(srcdir)/ruby_source/vm_exec.h		\
+  $(srcdir)/ruby_source/vm_insnhelper.c		\
+  $(srcdir)/ruby_source/vm_insnhelper.h		\
+  $(srcdir)/ruby_source/vm_opts.h		\
+  $(srcdir)/ruby_source/insns_info.inc		\
+  $(srcdir)/ruby_source/insns.inc		\
+  $(srcdir)/ruby_source/constant.h		\
+  $(srcdir)/ruby_source/atomic.h		\
+  $(srcdir)/ruby_source/internal.h		\
+  $(srcdir)/ruby_source/manual_update.h		\
+  $(srcdir)/generated_c_include/iter_api.h	\
+  $(srcdir)/generated_c_include/vm_api.h	\
+  $(srcdir)/generated_c_include/inline_api.h	\
+  $(srcdir)/generated_c_include/unbox_api.h	\
+  $(srcdir)/generated_c_include/unbox_api.h.rb	\
+  $(srcdir)/extconf.h				\
+  $(srcdir)/cast_off.h				\
+  $(srcdir)/cast_off.c.rb
+	$(ruby) -- $(srcdir)/cast_off.c.rb $(srcdir)/ruby_source $(srcdir)/generated_c_include > $@
+
+
+cast_off.o:					\
+  $(arch_hdrdir)/ruby/config.h			\
+  $(hdrdir)/ruby/defines.h			\
+  $(hdrdir)/ruby/intern.h			\
+  $(hdrdir)/ruby/missing.h			\
+  $(hdrdir)/ruby/ruby.h				\
+  $(hdrdir)/ruby/st.h				\
+  $(srcdir)/ruby_source/eval_intern.h		\
+  $(srcdir)/ruby_source/iseq.h			\
+  $(srcdir)/ruby_source/method.h		\
+  $(srcdir)/ruby_source/node.h			\
+  $(srcdir)/ruby_source/thread_pthread.h	\
+  $(srcdir)/ruby_source/thread_win32.h		\
+  $(srcdir)/ruby_source/vm_core.h		\
+  $(srcdir)/ruby_source/vm_exec.h		\
+  $(srcdir)/ruby_source/vm_insnhelper.c		\
+  $(srcdir)/ruby_source/vm_insnhelper.h		\
+  $(srcdir)/ruby_source/vm_opts.h		\
+  $(srcdir)/ruby_source/insns_info.inc		\
+  $(srcdir)/ruby_source/insns.inc		\
+  $(srcdir)/ruby_source/constant.h		\
+  $(srcdir)/ruby_source/atomic.h		\
+  $(srcdir)/ruby_source/internal.h		\
+  $(srcdir)/ruby_source/manual_update.h		\
+  $(srcdir)/generated_c_include/iter_api.h	\
+  $(srcdir)/generated_c_include/vm_api.h	\
+  $(srcdir)/generated_c_include/inline_api.h	\
+  $(srcdir)/generated_c_include/unbox_api.h	\
+  $(srcdir)/generated_c_include/unbox_api.h.rb	\
+  $(srcdir)/extconf.h				\
+  $(srcdir)/cast_off.h				\
+  $(srcdir)/cast_off.c
+

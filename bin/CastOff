@@ -1,0 +1,124 @@
+#!/usr/bin/env ruby
+
+require 'rubygems'
+require 'optparse'
+require 'cast_off'
+
+this = File.expand_path(__FILE__)
+step = nil
+verbose = false
+initialize = false
+deoptimize = false
+threshold = 100
+name = nil
+
+opt = OptionParser.new(<<-EOS, 32, '    ')
+CastOff is a performance improvement tool for Ruby1.9.3.
+
+  Usage:
+  CastOff [options] [programfile] [arguments]
+EOS
+opt.separator("\n  Options:")
+opt.on('--verbose', <<-EOS.strip) {|v| verbose = true }
+                                     Show compilation progress and internal information.
+EOS
+opt.on('--initialize', <<-EOS.strip) {|v| initialize = true }
+                                     Clear profile information and re-compile target program.
+EOS
+opt.on('--deoptimize', <<-EOS.strip) {|v| deoptimize = true }
+                                     Enable deoptimization.
+EOS
+opt.on('--threshold=COUNT', <<-EOS.strip, Integer) {|v| threshold = v }
+                                     Compile method which is executed more than COUNT.
+                                     Default value is 100.
+EOS
+opt.on('--name=NAME', <<-EOS.strip, String) {|v| name = v }
+                                     Name compiled binary NAME.
+                                     This name is used for search of compiled binaries.
+EOS
+opt.on('--step-1', <<-EOS.strip) {|v| step = '1' }
+                                     First step of compilation.
+                                     On this step, CastOff decides compilation target methods.
+EOS
+opt.on('--step-2', <<-EOS.strip) {|v| step = '2' }
+                                     Second step of compilation.
+                                     On this step, CastOff collects profile information.
+EOS
+opt.on('--step-3', <<-EOS.strip) {|v| step = '3' }
+                                     Last step of compilation.
+                                     On this step, CastOff compiles methods using profile information.
+EOS
+opt.on('--run', <<-EOS.strip) {|v| step = 'run' }
+                                     Execute [programfile] with compiled binaries.
+EOS
+opt.on_tail('-h', "--help", "Show this help.") do
+  puts opt
+  exit
+end
+opt.on_tail("--version", "Show version number.") do
+  puts Gem.loaded_specs['cast_off'].version.to_s
+  exit
+end
+
+opt.order!(ARGV)
+
+args = ARGV.join(" ")
+script = ARGV.shift
+
+unless File.exist?(script)
+  STDERR.puts("#{script} is not exist")
+  exit(1)
+end
+name = File.basename(script) unless name
+
+configuration = <<-EOS
+CastOff.program_name = #{name.inspect}
+CastOff.deoptimize(#{deoptimize})
+CastOff.use_default_configuration()
+EOS
+eval(configuration, binding)
+CastOff.compilation_threshold = threshold
+CastOff.program_name = name
+CastOff::Util.set_verbose_mode(verbose)
+
+case step
+when nil
+  STDERR.puts("-------------------------------- compilation start, threshold = #{threshold}, name = #{name}: #{args} --------------------------------")
+  3.times{|i| system("#{this} --step-#{i + 1} #{initialize ? '--initialize' : ''} --threshold=#{threshold} --name=#{name} #{deoptimize ? '--deoptimize' : ''} #{verbose ? '--verbose' : ''} #{args}")}
+when '1'
+  STDERR.puts("-------------------------------- step 1 --------------------------------")
+  CastOff.development(true)
+  CastOff.use_base_configuration(false)
+  CastOff.clear_base_configuration(initialize)
+  CastOff.autocompile()
+when '2'
+  STDERR.puts("-------------------------------- step 2 --------------------------------")
+  CastOff.development(true)
+  CastOff.use_base_configuration(false)
+  CastOff.autoload()
+when '3'
+  STDERR.puts("-------------------------------- step 3 --------------------------------")
+  CastOff.update_base_configuration(true)
+  CastOff.use_profile_results(true)
+  CastOff.autoload()
+  msg = <<-EOS
+
+----------------------------------------------------------------------------------------
+Compilation finished successfully.
+Please add following lines to #{script}.
+
+require 'cast_off'
+#{configuration.chomp}
+CastOff.autoload()
+----------------------------------------------------------------------------------------
+  EOS
+  at_exit{STDERR.puts(msg)}
+  #ObjectSpace.define_finalizer(configuration){STDERR.puts(msg)}
+when 'run'
+  CastOff.autoload()
+else
+  raise("should not be reached")
+end
+
+load script if step
+
