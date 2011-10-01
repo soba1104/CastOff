@@ -49,10 +49,18 @@ module CastOff::Compiler
   rb_bug("should not be reached");
       EOS
 
-      GUARD_EXCEPTION_TEMPLATE = ERB.new(<<-EOS, 0, '%-', 'g1')
-    VALUE path0 = rb_class_path(rb_class_of(<%= @guard_value %>));
-    VALUE path1 = rb_class_path(rb_obj_class(<%= @guard_value %>));
-    rb_raise(rb_eCastOffExecutionError, "type mismatch: guard(<%= @guard_value %>:<%= "\#{@insn.pc}: \#{@insn.op}, depth = \#{@insn.depth}" %>)\\nname = <%= @insn.iseq.name %>, line = <%= @source_line %>: source = %s\\nexpected <%= @guard_value.types %> but %s, %s\\n<%= @translator.target_name() %>", <%= @source.to_s.inspect %>, RSTRING_PTR(path0), RSTRING_PTR(path1));
+      GUARD_EXCEPTION_FUNCTION_TEMPLATE = ERB.new(<<-EOS, 0, '%-', 'g1')
+NORETURN(static inline int throw_exception_<%= @label %>(VALUE obj));
+static inline int throw_exception_<%= @label %>(VALUE obj)
+{
+  VALUE path0 = rb_class_path(rb_class_of(obj));
+  VALUE path1 = rb_class_path(rb_obj_class(obj));
+  rb_raise(rb_eCastOffExecutionError, "\\
+type mismatch: guard(<%= @guard_value %>:<%= "\#{@insn.pc}: \#{@insn.op}, depth = \#{@insn.depth}" %>)\\n\\
+name = <%= @insn.iseq.name %>, line = <%= @source_line %>: source = %s\\n\\
+expected <%= @guard_value.types %> but %s, %s\\n\\
+<%= @translator.target_name() %>", <%= @source.to_s.inspect %>, RSTRING_PTR(path0), RSTRING_PTR(path1));
+}
       EOS
 
       GUARD_TEMPLATE = ERB.new(<<-EOS, 0, '%-', 'g0')
@@ -62,32 +70,93 @@ module CastOff::Compiler
     goto <%= @insn.guard_label %>;
 %  @insn.iseq.inject_guard(@insn, GUARD_DEOPTIMIZATION_TEMPLATE.trigger(binding))
 %else
-<%= GUARD_EXCEPTION_TEMPLATE.trigger(binding) %>
+%@translator.declare_throw_exception_function(GUARD_EXCEPTION_FUNCTION_TEMPLATE.trigger(binding))
+    throw_exception_<%= @label %>(<%= guard_value %>);
 %end
 <%= guard_end() %>
       EOS
 
       GUARD_CHECK_TEMPLATE = ERB.new(<<-EOS, 0, '%-', 'g3')
 %if @guard_value.is_just?(NilClass)
-  if (NIL_P(<%= @guard_value %>)) {
+  if (!NIL_P(<%= @guard_value %>)) {
 %elsif @guard_value.is_just?(TrueClass)
-  if (<%= @guard_value %> == Qtrue) {
+  if (<%= @guard_value %> != Qtrue) {
 %elsif @guard_value.is_just?(FalseClass)
-  if (<%= @guard_value %> == Qfalse) {
+  if (<%= @guard_value %> != Qfalse) {
 %elsif @guard_value.is_just?(Symbol)
-  if (SYMBOL_P(<%= @guard_value %>)) {
+  if (!SYMBOL_P(<%= @guard_value %>)) {
 %elsif @guard_value.is_just?(Fixnum)
-  if (FIXNUM_P(<%= @guard_value %>)) {
+  if (!FIXNUM_P(<%= @guard_value %>)) {
 %else
-  cast_off_tmp = rb_class_of(<%= @guard_value %>);
+%  if simple?
+%    @translator.declare_class_check_function(CLASS_CHECK_FUNCTION_TEMPLATE_SIMPLE.trigger(binding))
+  if (!class_check_<%= @label %>(<%= @guard_value %>)) {
+%  else
+%    @translator.declare_class_check_function(CLASS_CHECK_FUNCTION_TEMPLATE_COMPLEX.trigger(binding))
+  if (!class_check_<%= @label %>(<%= @guard_value %>, rb_class_of(<%= @guard_value %>))) {
+%  end
+%end
+
+      EOS
+
+      CLASS_CHECK_FUNCTION_TEMPLATE_SIMPLE = ERB.new(<<-EOS, 0, '%-', 'g4')
+static inline int class_check_<%= @label %>(VALUE obj)
+{
+  if (0) {
+%if @guard_value.is_also?(NilClass)
+  } else if (NIL_P(obj)) {
+    return 1;
+%end
+%if @guard_value.is_also?(TrueClass)
+  } else if (obj == Qtrue) {
+    return 1;
+%end
+%if @guard_value.is_also?(FalseClass)
+  } else if (obj == Qfalse) {
+    return 1;
+%end
+%if @guard_value.is_also?(Symbol)
+  } else if (SYMBOL_P(obj)) {
+    return 1;
+%end
+%if @guard_value.is_also?(Fixnum)
+  } else if (FIXNUM_P(obj)) {
+    return 1;
+%end
+  } else {
+    return 0;
+  }
+}
+      EOS
+
+      CLASS_CHECK_FUNCTION_TEMPLATE_COMPLEX = ERB.new(<<-EOS, 0, '%-', 'g4')
+NOINLINE(static int class_check_failed_<%= @label %>(VALUE obj, VALUE klass));
+
+static inline int class_check_<%= @label %>(VALUE obj, VALUE klass)
+{
   if (0) {
 %  @guard_value.types.each do |klass|
 %    name = @translator.get_c_classname(klass)
 %    raise(CompileError.new("can't generate guard for \#{klass}, you should pass binding to CastOff (\#{klass.singleton? ? 1 : 0})")) unless name
-  } else if (cast_off_tmp == <%= name %>) {
+  } else if (LIKELY(klass == <%= name %>)) {
+    return 1;
 %  end
-%end
   } else {
+    if (LIKELY(class_check_failed_<%= @label %>(obj, klass))) {
+      return 1;
+    } else {
+      return 0;
+    }
+  }
+}
+
+static int class_check_failed_<%= @label %>(VALUE obj, VALUE klass)
+{
+  if (UNLIKELY(FL_TEST(klass, FL_SINGLETON) && empty_method_table_p(klass))) {
+    return class_check_<%= @label %>(obj, rb_obj_class(obj));
+  }
+  return 0;
+}
       EOS
 
       def initialize(val, vars, insn, cfg)
@@ -104,6 +173,7 @@ module CastOff::Compiler
 	@source = @insn.source
 	@source = @source.empty? ? nil : @source
 	@source_line = @insn.line.to_s
+	@label = self.__id__.to_s.gsub(/-/, "_")
       end
 
       ### unboxing begin ###
@@ -193,8 +263,20 @@ module CastOff::Compiler
 
       private
       
+      def simple?
+	bug() if @guard_value.dynamic?
+	bug() if @guard_value.class_exact?
+	special_consts = [NilClass, TrueClass, FalseClass, Symbol, Fixnum]
+	special_consts.size.times do |i|
+	  special_consts.combination(i + 1).each do |pattern|
+	    return true if @guard_value.is_just?(pattern)
+	  end
+	end
+	false
+      end
+
       def guard_begin()
-        GUARD_CHECK_TEMPLATE.trigger(binding).chomp
+        GUARD_CHECK_TEMPLATE.trigger(binding).chomp.chomp
       end
 
       def guard_end()

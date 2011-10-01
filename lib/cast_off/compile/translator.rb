@@ -376,6 +376,22 @@ static VALUE cast_off_initialize_fptr_<%= sign %>(VALUE dummy)
   return Qnil;
 }
 
+static inline int empty_method_table_p(VALUE klass)
+{
+  st_table *mtbl = RCLASS_M_TBL(klass);
+
+  if (!mtbl) rb_bug("empty_method_table_p: shoult not be reached");
+  return mtbl->num_entries == 0;
+}
+
+%@throw_exception_functions.each do |(key, value)|
+<%= key %>
+%end
+
+%@class_check_functions.each do |(key, value)|
+<%= key %>
+%end
+
 %if !inline_block?
 static VALUE* init_lvar_ptr(rb_thread_t *th, long lvar_size)
 {
@@ -748,6 +764,8 @@ void Init_<%= sign %>(void)
       @fptr = {}
       @ic = {}
       @declare_constants = {}
+      @class_check_functions = {}
+      @throw_exception_functions = {}
       @prefetch_constants = {}
       @ivar_index = {}
       @loopkey = {}
@@ -871,6 +889,14 @@ Source line is #{@root_iseq.source_line}.
 
     def declare_constant(var)
       @declare_constants[var] = true
+    end
+
+    def declare_class_check_function(func)
+      @class_check_functions[func] = true
+    end
+
+    def declare_throw_exception_function(func)
+      @throw_exception_functions[func] = true
     end
 
     def prefetch_constant(var, path, singleton_p)
