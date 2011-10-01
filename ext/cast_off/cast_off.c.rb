@@ -259,6 +259,8 @@ static VALUE cast_off_get_iseq(VALUE self, VALUE obj, VALUE mid, VALUE singleton
   rb_method_definition_t *def;
   VALUE km;
   int class;
+  char *msg = NULL;
+  VALUE name;
 
   if (singleton_p == Qtrue) {
     class = 1;
@@ -270,17 +272,15 @@ static VALUE cast_off_get_iseq(VALUE self, VALUE obj, VALUE mid, VALUE singleton
     } else if (c == rb_cModule) {
       class = 0;
     } else {
-      rb_bug("should not be reached(0)");
+      rb_bug("cast_off_get_iseq: should not be reached(0)");
     }
     km = obj;
   } else {
-    rb_bug("should not be reached(1)");
+    rb_bug("cast_off_get_iseq: should not be reached(1)");
   }
 
   me = search_method(km, SYM2ID(mid));
   if (!me) {
-    VALUE name;
-
     if (class) {
       name = rb_class_path(km);
     } else {
@@ -293,10 +293,47 @@ static VALUE cast_off_get_iseq(VALUE self, VALUE obj, VALUE mid, VALUE singleton
   switch (def->type) {
     case VM_METHOD_TYPE_ISEQ:
       return def->body.iseq->self;
+    case VM_METHOD_TYPE_CFUNC:
+      msg = "CastOff cannot compile C method";
+      break;
+    case VM_METHOD_TYPE_ATTRSET:
+      msg = "CastOff cannot compile attr_writer";
+      break;
+    case VM_METHOD_TYPE_IVAR:
+      msg = "CastOff cannot compile attr_reader";
+      break;
+    case VM_METHOD_TYPE_BMETHOD:
+      msg = "Currently, CastOff cannot compile method defined by define_method";
+      break;
+    case VM_METHOD_TYPE_ZSUPER:
+      msg = "Unsupported method type zsuper";
+      break;
+    case VM_METHOD_TYPE_UNDEF:
+      msg = "Unsupported method type undef";
+      break;
+    case VM_METHOD_TYPE_NOTIMPLEMENTED:
+      msg = "Unsupported method type notimplemented";
+      break;
+    case VM_METHOD_TYPE_OPTIMIZED:
+      msg = "Unsupported method type optimized";
+      break;
+    case VM_METHOD_TYPE_MISSING:
+      msg = "Unsupported method type missing";
+      break;
     default:
-      /* nothing to do */
-      rb_raise(rb_eCastOffUnsupportedError, "Unsupported method type");
+      msg = NULL;
   }
+
+  if (!msg) {
+    rb_bug("cast_off_get_iseq: should not be reached(2)");
+  }
+
+  if (class) {
+    name = rb_class_path(km);
+  } else {
+    name = rb_mod_name(km);
+  }
+  rb_raise(rb_eCastOffUnsupportedError, "%s (%s#%s)", msg, RSTRING_PTR(name), rb_id2name(SYM2ID(mid)));
 }
 
 static VALUE cast_off_get_iseq_from_block(VALUE self, VALUE block)

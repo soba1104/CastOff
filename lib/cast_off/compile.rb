@@ -21,9 +21,10 @@ module CastOff
 
     @@autoload_running = false
     def autoload()
-      # raise if @@autocompile_running
-      return if @@autoload_running
+      return false if @@autocompile_running
+      return true if @@autoload_running
       @@autoload_running = true
+      return true if load()
 
       compiled = nil
       hook_class_definition_end lambda {
@@ -32,6 +33,7 @@ module CastOff
 	fin = __load(compiled)
 	hook_class_definition_end(nil) if fin
       }
+      true
     end
 
     def load()
@@ -49,8 +51,8 @@ module CastOff
 
     @@autocompile_running = false
     def autocompile()
-      # raise if @@autoload_running
-      return if @@autocompile_running
+      return false if @@autoload_running
+      return true if @@autocompile_running
       @@autocompile_running = true
       class_table = {}
       bind_table = {}
@@ -87,7 +89,9 @@ module CastOff
 	targets = []
 	class_table.each do |klass, method_table|
 	  next unless klass.instance_of?(Class) || klass.instance_of?(Module) # FIXME
-	  next if klass.name =~ /CastOff/
+	  next if klass.name =~ /CastOff/ # ここで弾いておかないと、__compile の require で __load が走る。
+					  # Namespace のほうはあらかじめ require しておくことで回避。
+					  # Namespace 以外は CastOff を含むので問題無し。
 	  method_table.each{|mid, count| targets << [klass, mid, count]}
 	end
 	targets = sort_targets(targets, cinfo_table)
@@ -120,6 +124,7 @@ module CastOff
 	end
 	CodeManager.dump_auto_compiled(compiled)
       end
+      true
     end
 
     def compile_instance_methods(klass, bind = nil, skip = [])
@@ -286,8 +291,6 @@ Currently, CastOff cannot compile method which source file is not exist.
 	last_used_conf = nil
 	conf = select_configuration(current_specified_conf, manager)
       end
-      require 'cast_off/compile/namespace/uuid'
-      require 'cast_off/compile/namespace/namespace'
       require 'cast_off/compile/instruction'
       require 'cast_off/compile/iseq'
       require 'cast_off/compile/ir/simple_ir'

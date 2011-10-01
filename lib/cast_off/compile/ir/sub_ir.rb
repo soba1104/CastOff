@@ -182,6 +182,8 @@ module CastOff::Compiler
 	    ret << "  #{@dst} = #{@src};"
 	  end
 	end
+	s = sampling_variable()
+	ret << s if s
 	ret.join("\n")
       end
 

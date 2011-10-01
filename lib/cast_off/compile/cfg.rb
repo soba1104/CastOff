@@ -360,7 +360,8 @@ module CastOff::Compiler
 	    when Self
 	      ir.add_sampling_variable(d)
 	    when SubIR
-	      ir.add_sampling_variable(d.src)
+	      d.add_sampling_variable(d.src)
+	      #ir.add_sampling_variable(d.src)
 	    when CallIR
 	      # Nothing to do.
 	      # Always sampling CallIR's return value.
