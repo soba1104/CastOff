@@ -1286,6 +1286,9 @@ static VALUE cast_off_hook_class_definition_end(VALUE self, VALUE proc)
   static int hook = 0;
 
   if (proc == Qnil) {
+    if (!hook) {
+      return Qfalse;
+    }
     hook = 0;
     rb_remove_event_hook(&cast_off_class_definition_end_handler);
     return Qtrue;
@@ -1408,6 +1411,9 @@ static VALUE cast_off_hook_method_invocation(VALUE self, VALUE proc)
   static int hook = 0;
 
   if (proc == Qnil) {
+    if (!hook) {
+      return Qfalse;
+    }
     hook = 0;
     rb_remove_event_hook(&cast_off_method_invocation_handler);
     return Qtrue;

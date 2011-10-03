@@ -73,6 +73,7 @@ name = File.basename(script) unless name
 
 configuration = <<-EOS
 CastOff.program_name = #{name.inspect}
+CastOff.skip_configuration_check(true)
 CastOff.deoptimize(#{deoptimize})
 CastOff.use_default_configuration()
 EOS

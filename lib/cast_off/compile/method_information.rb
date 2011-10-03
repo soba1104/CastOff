@@ -1,6 +1,8 @@
 module CastOff
   module Compiler
     class MethodInformation
+      include CastOff::Util
+
       attr_reader :method
 
       InformationName = [
@@ -36,6 +38,8 @@ module CastOff
 	  ome = other.method
 	when MethodWrapper
 	  ome = other
+	else
+	  bug()
 	end
 	bug() unless @method.instance_of?(MethodWrapper)
 	bug() unless ome.instance_of?(MethodWrapper)

@@ -2240,6 +2240,7 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
       :@@development					=> [false, true,  true],
       :@@use_profile_results				=> [false, false, false],
       :@@alert_override					=> [true,  true,  false],
+      :@@skip_configuration_check			=> [false, false, true],
 
       # For base configuration
       :@@clear_base_configuration			=> [false, false, true],
@@ -2334,6 +2335,7 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
     def check_method_information_usage()
       @method_information_usage.each do |me0|
 	me1 = MethodInformations[me0.method]
+	return false unless me1
 	return false unless me0 == me1
       end
       true

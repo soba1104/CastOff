@@ -19,24 +19,29 @@ module CastOff
     @@blacklist = [
     ]
 
-    @@autoload_running = false
+    @@autoload_proc = nil
     def autoload()
-      return false if @@autocompile_running
-      return true if @@autoload_running
-      @@autoload_running = true
+      return false if autocompile_running?
+      if autoload_running?
+	@@autoload_proc.call()
+	return true 
+      end
       return true if load()
 
       compiled = nil
-      hook_class_definition_end lambda {
+      @@autoload_proc = lambda {
 	compiled = CodeManager.load_autocompiled() unless compiled
-	return unless compiled
+	return false unless compiled
 	fin = __load(compiled)
 	hook_class_definition_end(nil) if fin
+	fin
       }
+      hook_class_definition_end(@@autoload_proc)
       true
     end
 
     def load()
+      return @@autoload_proc.call() if autoload_running?
       compiled = CodeManager.load_autocompiled()
       return false unless compiled
       __load(compiled)
@@ -49,16 +54,15 @@ module CastOff
       @@compilation_threshold = num
     end
 
-    @@autocompile_running = false
+    @@autocompile_proc = nil
     def autocompile()
-      return false if @@autoload_running
-      return true if @@autocompile_running
-      @@autocompile_running = true
+      return false if autoload_running?
+      return true if autocompile_running?
       class_table = {}
       bind_table = {}
       location_table = {}
       cinfo_table = {}
-      hook_method_invocation lambda {|event, file, line, mid, bind, klass, cinfo|
+      @@autocompile_proc = lambda {|event, file, line, mid, bind, klass, cinfo|
       #set_trace_func lambda {|event, file, line, mid, bind, klass|
 	return unless file
 	return if line < 0
@@ -83,6 +87,7 @@ module CastOff
 	  table[cinfo] = true
 	end
       }
+      hook_method_invocation(@@autocompile_proc)
       at_exit do
 	hook_method_invocation(nil) # clear trace
 	#set_trace_func(nil) # clear trace
@@ -117,9 +122,9 @@ module CastOff
 	    end
 	    location = location_table[[klass, mid]]
 	    compiled << ([klass, mid, singleton] + location + [Configuration::BindingWrapper.new(bind), count]) # klass, mid, file, line, binding
-	    vlog("#{index}(#{count}): compile #{klass}##{mid}")
+	    vlog("#{index}(#{count}): compile #{klass}#{singleton ? '.' : '#'}#{mid}")
 	  rescue UnsupportedError => e
-	    vlog("#{index}(#{count}): failed to compile #{klass}##{mid} (#{e.message})")
+	    vlog("#{index}(#{count}): failed to compile #{klass}#{singleton ? '.' : '#'}#{mid} (#{e.message})")
 	  end
 	end
 	CodeManager.dump_auto_compiled(compiled)
@@ -188,6 +193,24 @@ module CastOff
 
     private
 
+    def execute_no_hook()
+      bug() unless block_given?
+      begin
+	hook_m = hook_method_invocation(nil)
+	hook_c = hook_class_definition_end(nil)
+	yield
+      ensure
+	if hook_m
+	  bug() unless autocompile_running?
+	  hook_method_invocation(@@autocompile_proc)
+	end
+	if hook_c
+	  bug() unless autoload_running?
+	  hook_class_definition_end(@@autoload_proc)
+	end
+      end
+    end
+
     def gen_sign_from_iseq(iseq)
       filepath, line_no = *iseq.to_a.slice(7, 2)
       "#{filepath}_#{line_no}".gsub(/\.|\/|-/, "_")
@@ -202,7 +225,9 @@ Currently, CastOff cannot compile method which source file is not exist.
       EOS
       manager = CodeManager.new(filepath, line_no)
       suggestion = Suggestion.new(iseq, @@suggestion_io)
-      __compile(iseq, manager, typemap || {}, mid, is_proc, bind, suggestion)
+      execute_no_hook() do
+	__compile(iseq, manager, typemap || {}, mid, is_proc, bind, suggestion)
+      end
       [manager, suggestion]
     end
 
@@ -267,7 +292,7 @@ Currently, CastOff cannot compile method which source file is not exist.
     def __compile(iseq, manager, annotation, mid, is_proc, bind, suggestion)
       if reuse_compiled_binary? && !manager.target_file_updated?
 	# already compiled
-	if CastOff.development? || manager.last_used_configuration_enabled_development?
+	if CastOff.development? || !CastOff.skip_configuration_check? || manager.last_used_configuration_enabled_development?
 	  current_specified_conf = Configuration.new(annotation, bind)
 	  conf = select_configuration(current_specified_conf, manager)
 	  last_used_conf = manager.load_last_used_configuration()
@@ -291,6 +316,8 @@ Currently, CastOff cannot compile method which source file is not exist.
 	last_used_conf = nil
 	conf = select_configuration(current_specified_conf, manager)
       end
+      require 'cast_off/compile/namespace/uuid'
+      require 'cast_off/compile/namespace/namespace'
       require 'cast_off/compile/instruction'
       require 'cast_off/compile/iseq'
       require 'cast_off/compile/ir/simple_ir'
@@ -327,7 +354,7 @@ Currently, CastOff cannot compile method which source file is not exist.
       manager.configure(conf)
       manager.compile_c_source(c_source, dep)
       if CastOff.update_base_configuration?
-	vlog("update base configuration: #{conf}")
+	vlog("update base configuration:\n#{conf}")
 	manager.save_base_configuration(conf)
       end
       manager.dump_specified_configuration(current_specified_conf)
@@ -372,6 +399,14 @@ Currently, CastOff cannot compile method which source file is not exist.
 	vlog("catch exception #{e.class}: #{e}\n#{e.backtrace.join("\n")}")
 	false
       end
+    end
+
+    def autocompile_running?
+      !!@@autocompile_proc
+    end
+
+    def autoload_running?
+      !!@@autoload_proc
     end
 
     def __sort_targets(entry, targets, cinfo_table)
@@ -501,18 +536,20 @@ Currently, CastOff cannot compile method which source file is not exist.
     end
 
     def load_binary(manager, suggestion, iseq, bind)
-      so = manager.compiled_binary
-      sign = manager.signiture
-      bug("#{so} is not exist") unless File.exist?(so)
-      load_compiled_file(so)
-      function_pointer_initializer = "initialize_fptr_#{sign}".intern
-      hook_method_override(manager, function_pointer_initializer)
-      __send__("register_iseq_#{sign}", iseq)
-      __send__("register_ifunc_#{sign}")
-      set_sampling_table(suggestion, manager)
-      suggestion.dump_at_exit()
-      __send__(function_pointer_initializer)
-      __send__("prefetch_constants_#{sign}", bind) if bind
+      execute_no_hook() do
+	so = manager.compiled_binary
+	sign = manager.signiture
+	bug("#{so} is not exist") unless File.exist?(so)
+	load_compiled_file(so)
+	function_pointer_initializer = "initialize_fptr_#{sign}".intern
+	hook_method_override(manager, function_pointer_initializer)
+	__send__("register_iseq_#{sign}", iseq)
+	__send__("register_ifunc_#{sign}")
+	set_sampling_table(suggestion, manager)
+	suggestion.dump_at_exit()
+	__send__(function_pointer_initializer)
+	__send__("prefetch_constants_#{sign}", bind) if bind
+      end
     end
   end
 end

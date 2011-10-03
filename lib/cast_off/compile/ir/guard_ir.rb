@@ -50,8 +50,8 @@ module CastOff::Compiler
       EOS
 
       GUARD_EXCEPTION_FUNCTION_TEMPLATE = ERB.new(<<-EOS, 0, '%-', 'g1')
-NORETURN(static inline int throw_exception_<%= @label %>(VALUE obj));
-static inline int throw_exception_<%= @label %>(VALUE obj)
+NORETURN(static inline int <THROW_EXCEPTION_FUNCTION_NAME>(VALUE obj));
+static inline int <THROW_EXCEPTION_FUNCTION_NAME>(VALUE obj)
 {
   VALUE path0 = rb_class_path(rb_class_of(obj));
   VALUE path1 = rb_class_path(rb_obj_class(obj));
@@ -70,8 +70,8 @@ expected <%= @guard_value.types %> but %s, %s\\n\\
     goto <%= @insn.guard_label %>;
 %  @insn.iseq.inject_guard(@insn, GUARD_DEOPTIMIZATION_TEMPLATE.trigger(binding))
 %else
-%@translator.declare_throw_exception_function(GUARD_EXCEPTION_FUNCTION_TEMPLATE.trigger(binding))
-    throw_exception_<%= @label %>(<%= guard_value %>);
+%  func = @translator.declare_throw_exception_function(GUARD_EXCEPTION_FUNCTION_TEMPLATE.trigger(binding))
+    <%= func %>(<%= guard_value %>);
 %end
 <%= guard_end() %>
       EOS
@@ -89,18 +89,18 @@ expected <%= @guard_value.types %> but %s, %s\\n\\
   if (!FIXNUM_P(<%= @guard_value %>)) {
 %else
 %  if simple?
-%    @translator.declare_class_check_function(CLASS_CHECK_FUNCTION_TEMPLATE_SIMPLE.trigger(binding))
-  if (!class_check_<%= @label %>(<%= @guard_value %>)) {
+%    func = @translator.declare_class_check_function(CLASS_CHECK_FUNCTION_TEMPLATE_SIMPLE.trigger(binding))
+  if (!<%= func %>(<%= @guard_value %>)) {
 %  else
-%    @translator.declare_class_check_function(CLASS_CHECK_FUNCTION_TEMPLATE_COMPLEX.trigger(binding))
-  if (!class_check_<%= @label %>(<%= @guard_value %>, rb_class_of(<%= @guard_value %>))) {
+%    func = @translator.declare_class_check_function(CLASS_CHECK_FUNCTION_TEMPLATE_COMPLEX.trigger(binding))
+  if (!<%= func %>(<%= @guard_value %>, rb_class_of(<%= @guard_value %>))) {
 %  end
 %end
 
       EOS
 
       CLASS_CHECK_FUNCTION_TEMPLATE_SIMPLE = ERB.new(<<-EOS, 0, '%-', 'g4')
-static inline int class_check_<%= @label %>(VALUE obj)
+static inline int <CLASS_CHECK_FUNCTION_NAME>(VALUE obj)
 {
   if (0) {
 %if @guard_value.is_also?(NilClass)
@@ -130,9 +130,9 @@ static inline int class_check_<%= @label %>(VALUE obj)
       EOS
 
       CLASS_CHECK_FUNCTION_TEMPLATE_COMPLEX = ERB.new(<<-EOS, 0, '%-', 'g4')
-NOINLINE(static int class_check_failed_<%= @label %>(VALUE obj, VALUE klass));
+NOINLINE(static int <CLASS_CHECK_FUNCTION_NAME>_failed(VALUE obj, VALUE klass));
 
-static inline int class_check_<%= @label %>(VALUE obj, VALUE klass)
+static inline int <CLASS_CHECK_FUNCTION_NAME>(VALUE obj, VALUE klass)
 {
   if (0) {
 %  @guard_value.types.each do |klass|
@@ -142,7 +142,7 @@ static inline int class_check_<%= @label %>(VALUE obj, VALUE klass)
     return 1;
 %  end
   } else {
-    if (LIKELY(class_check_failed_<%= @label %>(obj, klass))) {
+    if (LIKELY(<CLASS_CHECK_FUNCTION_NAME>_failed(obj, klass))) {
       return 1;
     } else {
       return 0;
@@ -150,10 +150,10 @@ static inline int class_check_<%= @label %>(VALUE obj, VALUE klass)
   }
 }
 
-static int class_check_failed_<%= @label %>(VALUE obj, VALUE klass)
+static int <CLASS_CHECK_FUNCTION_NAME>_failed(VALUE obj, VALUE klass)
 {
   if (UNLIKELY(FL_TEST(klass, FL_SINGLETON) && empty_method_table_p(klass))) {
-    return class_check_<%= @label %>(obj, rb_obj_class(obj));
+    return <CLASS_CHECK_FUNCTION_NAME>(obj, rb_obj_class(obj));
   }
   return 0;
 }
@@ -173,7 +173,6 @@ static int class_check_failed_<%= @label %>(VALUE obj, VALUE klass)
 	@source = @insn.source
 	@source = @source.empty? ? nil : @source
 	@source_line = @insn.line.to_s
-	@label = self.__id__.to_s.gsub(/-/, "_")
       end
 
       ### unboxing begin ###

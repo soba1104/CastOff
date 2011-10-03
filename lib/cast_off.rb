@@ -5,8 +5,6 @@ require 'cast_off/compile/dependency'
 require 'cast_off/compile/method_information'
 require 'cast_off/compile/configuration'
 require 'cast_off/compile/code_manager'
-require 'cast_off/compile/namespace/uuid'
-require 'cast_off/compile/namespace/namespace'
 require 'cast_off/compile'
 
 module CastOff

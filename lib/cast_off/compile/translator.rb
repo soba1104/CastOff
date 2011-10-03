@@ -384,12 +384,12 @@ static inline int empty_method_table_p(VALUE klass)
   return mtbl->num_entries == 0;
 }
 
-%@throw_exception_functions.each do |(key, value)|
-<%= key %>
+%@throw_exception_functions.each do |(func, name)|
+<%= func.gsub(/<THROW_EXCEPTION_FUNCTION_NAME>/, name) %>
 %end
 
-%@class_check_functions.each do |(key, value)|
-<%= key %>
+%@class_check_functions.each do |(func, name)|
+<%= func.gsub(/<CLASS_CHECK_FUNCTION_NAME>/, name) %>
 %end
 
 %if !inline_block?
@@ -892,11 +892,21 @@ Source line is #{@root_iseq.source_line}.
     end
 
     def declare_class_check_function(func)
-      @class_check_functions[func] = true
+      unless name = @class_check_functions[func]
+	idx = @class_check_functions.size()
+	name = "class_check_#{idx}"
+	@class_check_functions[func] = name
+      end
+      name
     end
 
     def declare_throw_exception_function(func)
-      @throw_exception_functions[func] = true
+      unless name = @throw_exception_functions[func]
+	idx = @throw_exception_functions.size()
+	name = "throw_exception_#{idx}"
+	@throw_exception_functions[func] = name
+      end
+      name
     end
 
     def prefetch_constant(var, path, singleton_p)
