@@ -14,7 +14,7 @@ CastOff is performance improvement tool for Ruby1.9.3
   spec.require_path	      = 'lib'
   spec.extensions	      = 'ext/cast_off/extconf.rb'
   spec.has_rdoc		      = false
-  spec.extra_rdoc_files      = ['README.ja']
+  spec.extra_rdoc_files      = ['README']
   #spec.test_files	      = Dir['test/*']
   spec.author		      = 'Satoshi Shiba'
   spec.email		      = 'shiba@rvm.jp'
