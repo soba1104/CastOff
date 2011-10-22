@@ -121,6 +121,12 @@ module CastOff
 	      CastOff.compile(klass, mid, bind)
 	    end
 	    location = location_table[[klass, mid]]
+	    begin
+	      Marshal.dump(klass)
+	    rescue TypeError => e
+	      vlog("failed to marshal dump #{klass}: #{e.message}")
+	      next
+	    end
 	    compiled << ([klass, mid, singleton] + location + [Configuration::BindingWrapper.new(bind), count]) # klass, mid, file, line, binding
 	    vlog("#{index}(#{count}): compile #{klass}#{singleton ? '.' : '#'}#{mid}")
 	  rescue UnsupportedError => e
