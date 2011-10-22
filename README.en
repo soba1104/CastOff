@@ -1,0 +1,98 @@
+* About CastOff
+CastOff is a performance improvement tool for Ruby1.9.3.
+In other words, CastOff is a compiler for Ruby1.9.3.
+CastOff compiles Ruby method (method written in Ruby) into C extension (method written in C)
+by using given information such as class information of variables.
+CastOff can reduce Ruby virtual machine overhead, so by use of CastOff,
+the performance of compilation target method can improve.
+
+This README document introduce basic functionality of CastOff.
+If you have any questions, comments, or suggestions please send email to shiba@rvm.jp,
+or use http://github.com/soba1104/CastOff/issues.
+
+
+
+* License
+Same as the license of Ruby1.9.3 runtime.
+
+
+
+* Installation
+$gem build cast_off.gemspec
+$gem install cast_off-0.1.0.gem --local
+
+Currently, CastOff supports Ruby1.9.3 only.
+So, if you attempt to use CastOff, please install CastOff under Ruby1.9.3 runtime. 
+
+
+
+* Attention
+
+** Incompatibility
+-Continuation
+CastOff causes problem about capture of continuation (callcc).
+So, you should not use CastOff to your program which uses Continuation.
+
+-Constant redefinition
+<<<Sorry, not yet documented.>>>
+
+-Built-in functions related with Method and Proc
+CastOff compiles Ruby method and proc into C extension.
+So, built-in functions related with Method and Proc (such as Method#arity, Proc#arity)
+return different values.
+
+# example
+class Foo
+  def foo(a, b = :b, *c); end
+end
+f = Foo.new
+puts (f.method(:foo).arity) # => -2
+CastOff.compile(Foo, :foo)
+puts (f.method(:foo).arity) # => -1
+
+
+** Startup time
+<<<Sorry, not yet documented.>>>
+
+
+** Compilation time
+<<<Sorry, not yet documented.>>>
+
+
+** Load of compiled method
+CastOff needs definition of compilation target method to load compiled method.
+If compilation target method is not defined, CastOff cannot load compiled method.
+
+When you use CastOff from command line, CastOff hooks class definition statement
+to check method definition. And load compiled method if compilation target method is defined.
+So, if you want to compile method outer class definition statement (such as following bar method),
+you need call CastOff.autoload or CastOff.load after method definition explicitly.
+
+-----------------------------------------------------
+class Foo # Compiled Foo#foo is loaded after class definition of Foo
+  def foo
+    ...
+  end
+end
+
+def bar() # There are no class definition after definition of bar,
+          # so Compiled bar method is not loaded.
+  ...
+end
+# If you want to load compiled bar method,
+# you should call CastOff.autoload or CastOff.load after definition of bar method.
+
+...
+-----------------------------------------------------
+
+
+
+* Usage
+
+** Use from command line
+<<<Sorry, not yet documented. I would write this section in a few days. >>>
+
+
+** Use from script
+<<<Sorry, not yet documented. I would write this section in a few days. >>>
+

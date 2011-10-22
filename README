@@ -7,7 +7,7 @@ C 拡張に変換することで、Ruby の仮想マシンのオーバヘッド�
 対象となるメソッドを高速化することができます。
 本 README では、CastOff の基本機能について紹介します。
 ご質問、ご要望等があれば、shiba@rvm.jp もしくは
-https://github.com/soba1104/CastOff/issues まで、ご連絡ください。
+http://github.com/soba1104/CastOff/issues まで、ご連絡ください。
 
 
 
@@ -37,7 +37,7 @@ $gem install cast_off
 特にコンパイルエラーを出すことが出来ない機能について列挙します。
 ここで列挙した機能を使用するプログラムやメソッドに対しては、CastOff を利用するべきではありません。
 ここに列挙した機能以外で非互換になる点を発見された方は、
-お手数ですが、shiba@rvm.jp もしくは https://github.com/soba1104/CastOff/issues まで、ご報告をお願い申し上げます。
+お手数ですが、shiba@rvm.jp もしくは http://github.com/soba1104/CastOff/issues まで、ご報告をお願い申し上げます。
 
 -継続(Continuation)
 Ruby の継続(Continuation) を用いた場合、実行コンテキストの保存に失敗することが確認できています。
