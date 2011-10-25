@@ -180,3 +180,75 @@ Execute target program with compiled methods.
 ** Use CastOff from script
 <<<Sorry, not yet documented. I would write this section in a few days. >>>
 
+
+*** Specify class information to CastOff
+You can specify class information to CastOff by followings.
+
+-Specify class of variables:
+--local variables, arguments
+:local_variable_name => class_name
+:local_variable_name => [class_name1, class_name2, ...]
+[:local_variable_name1, :local_variable_name2, ...] => class_name
+[:local_variable_name1, :local_variable_name2, ...] => [class_name1, class_name2, ...]
+
+--instance variables
+:@instance_variable_name => class_name
+:@instance_variable_name => [class_name1, class_name2, ...]
+[:@instance_variable_name1, :@instance_variable_name2, ...] => class_name
+[:@instance_variable_name1, :@instance_variable_name2, ...] => [class_name1, class_name2, ...]
+
+--class variables
+:@@class_variable_name => class_name
+:@@class_variable_name => [class_name1, class_name2, ...]
+[:@@class_variable_name1, :@@class_variable_name2, ...] => class_name
+[:@@class_variable_name1, :@@class_variable_name2, ...] => [class_name1, class_name2, ...]
+
+--global variables
+:$global_variable_name => class_name
+:$global_variable_name => [class_name1, class_name2, ...]
+[:$global_variable_name1, :$global_variable_name2, ...] => class_name
+[:$global_variable_name1, :$global_variable_name2, ...] => [class_name1, class_name2, ...]
+
+-Specify class of method return values:
+class_name => {:method_name1 => class_of_return_value, :method_name2 => [class_of_return_value1, class_of_return_value2, ...], ...}
+
+-Specify class of constants:
+<<<Sorry, not yet documented. I would write this section in a few days. >>>
+
+
+*** Compilation
+You can compile Ruby method into C extension by followings.
+
+-Compile instance method
+--API
+CastOff.compile(target(Class or Module), method_name(Symbol))
+CastOff.compile(target(Class or Module), method_name(Symbol), class_information(Hash))
+CastOff.compile(target(Class or Module), method_name(Symbol), binding(Binding))
+CastOff.compile(target(Class or Module), method_name(Symbol), binding(Binding), class_information(Hash))
+--Notes
+This API compiles Ruby instance method into C extension and loads compiled method.
+You should specify method_name(second argument) by Symbol class.
+CastOff uses binding(third argument) to resolve Ruby constants.
+
+-Compile singleton method
+--API
+CastOff.compile_singleton_method(target(Any Object), method_name(Symbol))
+CastOff.compile_singleton_method(target(Any Object), method_name(Symbol), class_information(Hash))
+CastOff.compile_singleton_method(target(Any Object), method_name(Symbol), binding(Binding))
+CastOff.compile_singleton_method(target(Any Object), method_name(Symbol), binding(Binding), class_information(Hash))
+--Notes
+This API compiles Ruby singleton method into C extension and loads compiled method.
+You should not use CastOff.compile when compile singleton method.
+You should specify method_name(second argument) by Symbol class.
+CastOff uses binding(third argument) to resolve Ruby constants.
+
+-Compile Ruby code and execute
+--API
+CastOff.execute(class_information(Hash)) { target code }
+--Notes
+This API compiles passed block and executes.
+
+
+*** Compile options
+<<<Sorry, not yet documented. I would write this section in a few days. >>>
+
