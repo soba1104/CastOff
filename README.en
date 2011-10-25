@@ -132,7 +132,48 @@ so if you call "CastOff.autoload" after all method definitions, CastOff can canc
 
 *** Command line arguments
 
-<<<Sorry, not yet documented. I would write this section in a few days. >>>
+CastOff [options] PathOfTargetProgram ArgumentsOfTargetProgram
+
+
+*** Command line options
+--verbose
+Show compilation progress and internal information.
+
+--deoptimize
+Enable deoptimization.
+(Currently, CastOff does not support deoptimization of methods which use block.)
+
+--initialize
+Clear profile information and re-compile target program.
+
+--threshold=COUNT
+Compile method which is executed more than COUNT.
+Default value is 100.
+
+--name=NAME
+Name compiled binary NAME.
+This name is used for search of compiled methods.
+
+-h, --help
+Show help.
+
+--version
+Show version number of CastOff.
+
+--step-1
+Execute first step of compilation.
+On this step, CastOff decides compilation target methods.
+
+--step-2
+Execute second step of compilation.
+On this step, CastOff collects profile information.
+
+--step-3
+Execute last step of compilation.
+On this step, CastOff compiles methods using profile information.
+
+--run
+Execute target program with compiled methods.
 
 
 
