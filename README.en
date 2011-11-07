@@ -18,8 +18,7 @@ Same as the license of Ruby1.9.3 runtime.
 
 
 * Installation
-$gem build cast_off.gemspec
-$gem install cast_off-0.2.0.gem --local
+$gem install cast_off
 
 Currently, CastOff supports Ruby1.9.3 only.
 So, if you attempt to use CastOff, please install CastOff under Ruby1.9.3 runtime. 
