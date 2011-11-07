@@ -1,9 +1,9 @@
 #if 1
 #define __END__ /* void */
 #else
-ruby_srcdir	    = ARGV[0];
+ruby_srcdir = ARGV[0];
 generated_c_include = ARGV[1];
-srcdir		    = File.dirname(__FILE__)
+srcdir = File.dirname(__FILE__)
 require("erb");
 require('rbconfig');
 DATA.rewind();
@@ -205,6 +205,79 @@ cast_off_instruction_stack_usage(VALUE self, VALUE insns)
   return INT2FIX(insn_stack_increase(0, insn, opes));
 }
 
+static VALUE
+cast_off_instruction_class_information_in_ic(VALUE self, VALUE iseqval)
+{
+  VALUE pc = rb_ivar_get(self, rb_intern("@pc"));
+  VALUE klass = Qnil;
+  VALUE *insn;
+  rb_iseq_t *iseq;
+  IC ic = NULL;
+
+  if (rb_class_of(pc) != rb_cFixnum || rb_class_of(iseqval) != rb_cISeq) {
+    rb_bug("cast_off_instruction_class_information_in_ic: should not be reached (0)");
+  }
+
+  if (FIX2INT(pc) < 0) {
+    return Qnil;
+  }
+
+  iseq = DATA_PTR(iseqval);
+  insn = &iseq->iseq[FIX2INT(pc)];
+
+  switch(insn[0]) {
+  case(BIN(send)):
+    ic = (IC)insn[5];
+    break;
+  case(BIN(opt_plus)):
+  case(BIN(opt_minus)):
+  case(BIN(opt_mult)):
+  case(BIN(opt_div)):
+  case(BIN(opt_mod)):
+  case(BIN(opt_eq)):
+  case(BIN(opt_lt)):
+  case(BIN(opt_le)):
+  case(BIN(opt_gt)):
+  case(BIN(opt_ge)):
+  case(BIN(opt_ltlt)):
+  case(BIN(opt_aref)):
+  case(BIN(opt_aset)):
+  case(BIN(opt_length)):
+  case(BIN(opt_size)):
+  case(BIN(opt_succ)):
+  case(BIN(opt_not)):
+    ic = (IC)insn[1];
+    break;
+  }
+
+  if (!ic) {
+    return Qnil;
+  }
+
+  klass = ic->ic_class;
+
+  if (!klass || klass == Qnil) {
+    return Qnil;
+  }
+
+  if (rb_obj_class(klass) != rb_cClass) {
+    /* FIXME 普通のオブジェクトが来ることがある。何でだろう。要調査 */
+    /* rb_bug("cast_off_instruction_class_information_in_ic: should not be reached (1)"); */
+    return Qnil;
+  }
+
+  if (FL_TEST(klass, FL_SINGLETON)) {
+    VALUE obj = rb_iv_get(klass, "__attached__");
+    VALUE __klass = rb_obj_class(obj);
+    if (__klass != rb_cClass && __klass != rb_cModule) {
+      return Qnil;
+    }
+    return rb_funcall(rb_cCastOffClassWrapper, rb_intern("new"), 2, obj, Qfalse);
+  } else {
+    return rb_funcall(rb_cCastOffClassWrapper, rb_intern("new"), 2, klass, Qtrue);
+  }
+}
+
 static VALUE cast_off_override_target(VALUE self, VALUE km, VALUE msym)
 {
   ID mid;
@@ -369,7 +442,7 @@ static VALUE cast_off_get_caller(VALUE self)
   return cfp->self;
 }
 
-extern void* dln_load(const char *file);
+RUBY_EXTERN void* dln_load(const char *file);
 static VALUE cast_off_load_compiled_file(VALUE self, VALUE file)
 {
   if (rb_obj_class(file) != rb_cString) {
@@ -378,276 +451,6 @@ static VALUE cast_off_load_compiled_file(VALUE self, VALUE file)
   dln_load(RSTRING_PTR(file));
 
   return Qnil;
-}
-
-VALUE cast_off_handle_blockarg(VALUE blockarg)
-{
-  VALUE thval = rb_thread_current();
-  rb_thread_t *th = DATA_PTR(thval);
-  rb_control_frame_t *cfp = th->cfp;
-  rb_proc_t *po;
-  rb_block_t *block;
-  VALUE proc;
-
-  proc = blockarg;
-  if (proc != Qnil) {
-    if (!rb_obj_is_proc(proc)) {
-      VALUE b = rb_check_convert_type(proc, T_DATA, "Proc", "to_proc");
-      if (NIL_P(b) || !rb_obj_is_proc(b)) {
-        rb_raise(rb_eTypeError, "wrong argument type %s (expected Proc)", rb_obj_classname(proc));
-      }
-      proc = b;
-    }
-    po = DATA_PTR(proc);
-    block = &po->block;
-    th->passed_block = block;
-  }
-  return proc;
-}
-
-static rb_iseq_t *iseq_from_cfp(rb_control_frame_t *cfp) 
-{
-  rb_iseq_t *iseq;
-  if (SPECIAL_CONST_P(cfp->iseq)) {
-    /* when finish frame, cfp->self = 4 (Qnil), cfp->flag = 0x51 (VM_FRAME_MAGIC_FINISH) */
-    rb_bug("iseq_from_cfp: should not be reached(0): self = %x, flag = %x", cfp-> self, cfp->flag);
-  } else if (BUILTIN_TYPE(cfp->iseq) != T_NODE) {
-    iseq = cfp->iseq;
-  } else {
-    NODE *ifunc = (NODE *)cfp->iseq;
-    VALUE iseqval = ifunc->nd_tval;
-    iseq = DATA_PTR(iseqval);
-  }
-  if (rb_class_of(iseq->self) != rb_cISeq) {
-    rb_bug("iseq_from_cfp: should not be reached(1)");
-  }
-  return iseq;
-}
-
-void cast_off_break(rb_num_t raw_state, VALUE epc, VALUE throwobj, int blk_key)
-{
-  int state = (int)(raw_state & 0xff);
-  int flag = (int)(raw_state & 0x8000);
-  /*rb_num_t level = raw_state >> 16;*/
-  int is_orphan = 1;
-
-  VALUE thval = rb_thread_current();
-  rb_thread_t *th = DATA_PTR(thval);
-  rb_control_frame_t *cfp = th->cfp;
-  VALUE *dfp = cfp->dfp;
-
-  rb_thread_check_ints();
-
-  if (state != TAG_BREAK || flag != 0) {
-    /* 
-     * flag != 0 のときは dfp の値が変わるので、vm_exec を見て
-     * state == TAG_BREAK && ((VALUE)escape_dfp & ~0x03) == 0 のくだりを実装する必要がある。
-     */
-    rb_bug("cast_off_break: should not be reached(0)");
-  }
-  if (VM_FRAME_TYPE(cfp) == VM_FRAME_MAGIC_LAMBDA) {
-    rb_raise(rb_eCastOffExecutionError, "Currently, CastOff doesn't support break statement in lambda");
-  }
-
-  dfp = GC_GUARDED_PTR_REF((VALUE *) *dfp);
-  while ((VALUE *)cfp < th->stack + th->stack_size) {
-    if (cfp->dfp == dfp) {
-      rb_iseq_t *iseq = iseq_from_cfp(cfp);
-      int i;
-
-      for (i=0; i<iseq->catch_table_size; i++) {
-        struct iseq_catch_table_entry *entry = &iseq->catch_table[i];
-        if (entry->type == CATCH_TYPE_BREAK && entry->start < epc && entry->end >= epc) {
-          if (entry->cont == epc) {
-            goto found;
-          } else {
-            break;
-          }
-        }
-      }
-      break;
-
-found:
-      is_orphan = 0;
-      break;
-    }
-    cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
-  }
-
-  if (is_orphan) {
-    rb_vm_localjump_error("break from proc-closure", throwobj, TAG_BREAK);
-  }
-
-  switch(VM_FRAME_TYPE(cfp)) {
-  case VM_FRAME_MAGIC_CFUNC:
-  case VM_FRAME_MAGIC_IFUNC:
-    cfp->pc = (VALUE*)blk_key;
-    break;
-  case VM_FRAME_MAGIC_BLOCK:
-  case VM_FRAME_MAGIC_LAMBDA:
-  case VM_FRAME_MAGIC_METHOD:
-    /* deoptimized frame */
-    /* nothing to do */
-    break;
-  default:
-    rb_bug("cast_off_break: should not be reached(1)");
-  }
-  th->errinfo = (VALUE)NEW_THROW_OBJECT(throwobj, (VALUE) dfp, state);
-  th->state = 0;
-
-  TH_JUMP_TAG(th, TAG_BREAK);
-}
-
-VALUE catch_break(rb_thread_t *th)
-{
-  VALUE err = th->errinfo;
-  VALUE *escape_dfp = GET_THROWOBJ_CATCH_POINT(err);
-
-  if (th->cfp->dfp == escape_dfp) {
-    th->errinfo = Qnil;
-    return GET_THROWOBJ_VAL(err);
-  }
-  return Qundef;
-}
-
-#define IN_HEAP_P(th, ptr)  \
-  (!((th)->stack < (ptr) && (ptr) < ((th)->stack + (th)->stack_size)))
-
-static VALUE cfp_env(rb_thread_t *th, rb_control_frame_t *cfp)
-{
-  VALUE *dfp = cfp->dfp;
-  VALUE *envptr = GC_GUARDED_PTR_REF(dfp[0]);
-  VALUE envval;
-
-  if (!envptr) {
-    rb_bug("cfp_env: should not be reached(0)");
-  }
-
-  if (IN_HEAP_P(th, envptr)) {
-    envval = envptr[1];
-    if (rb_class_of(envval) != rb_cEnv) {
-      rb_bug("cfp_env: should not be reached(1)");
-    }
-  } else {
-    envval = Qnil;
-  }
-
-  return envval;
-}
-
-/* ensure に対応すると大幅に書き直す必要がありそう */
-VALUE cast_off_return(rb_num_t raw_state, VALUE throwobj, int lambda_p)
-{
-  int state = (int)(raw_state & 0xff);
-  int flag = (int)(raw_state & 0x8000);
-  /*rb_num_t level = raw_state >> 16;*/
-
-  VALUE thval = rb_thread_current();
-  rb_thread_t *th = DATA_PTR(thval);
-  rb_control_frame_t *cfp = th->cfp;
-  VALUE *dfp = cfp->dfp;
-  VALUE *lfp = cfp->lfp;
-
-  rb_thread_check_ints();
-
-  if (state != TAG_RETURN || flag != 0) {
-    rb_bug("cast_off_return: should not be reached(0)");
-  }
-
-  if (VM_FRAME_TYPE(cfp) != VM_FRAME_MAGIC_IFUNC) {
-    rb_bug("cast_off_return: should not be reached(1)");
-  }
-
-  if (dfp == lfp) {
-    rb_bug("cast_off_return: should not be reached(2)");
-  }
-
-  if (lambda_p) {
-    return throwobj;
-  }
-
-  /* check orphan and get dfp */
-  cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
-  while ((VALUE *) cfp < th->stack + th->stack_size) {
-    if (cfp->lfp == lfp) {
-      VALUE env;
-
-      switch(VM_FRAME_TYPE(cfp)) {
-	case VM_FRAME_MAGIC_IFUNC:
-	  /* check lambda */
-	  env = cfp_env(th, cfp);
-	  if (env != Qnil) {
-	    rb_raise(rb_eCastOffExecutionError, "Currently, CastOff cannot handle this return statement");
-	  }
-	  break;
-	case VM_FRAME_MAGIC_CFUNC:
-	  /* nothing to do */
-	  break;
-	default:
-	  rb_bug("cast_off_return: should not be reached(3)");
-      }
-    }
-
-    if (cfp->dfp == lfp) {
-      int ok;
-
-      switch(VM_FRAME_TYPE(cfp)) {
-      case VM_FRAME_MAGIC_METHOD:
-	/* deoptimized frame */
-	/* nothing to do */
-      case VM_FRAME_MAGIC_CFUNC:
-	ok = 1;
-	break;
-      default:
-	ok = 0;
-      }
-
-      if (ok) {
-	dfp = lfp;
-	goto valid_return;
-      }
-    }
-    cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
-  }
-
-  rb_vm_localjump_error("unexpected return", throwobj, TAG_RETURN);
-
-valid_return:
-
-  th->errinfo = (VALUE)NEW_THROW_OBJECT(throwobj, (VALUE) dfp, state);
-  th->state = 0;
-
-  TH_JUMP_TAG(th, TAG_RETURN);
-}
-
-VALUE catch_return(rb_thread_t *th)
-{
-  VALUE err = th->errinfo;
-  VALUE *escape_dfp = GET_THROWOBJ_CATCH_POINT(err);
-
-  if (th->cfp->dfp == escape_dfp) {
-    th->errinfo = Qnil;
-    return GET_THROWOBJ_VAL(err);
-  }
-  return Qundef;
-}
-
-void cast_off_return_from_execute(rb_num_t raw_state, VALUE val)
-{
-  VALUE thval = rb_thread_current();
-  rb_num_t state;
-  rb_thread_t *th;
-  rb_control_frame_t *cfp;
-
-  th = DATA_PTR(thval);
-  cfp = th->cfp; /* current cfp */
-  cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp); /* CastOff.execute cfp */
-  cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
-  rb_thread_check_ints();
-  th->errinfo = vm_throw(th, cfp, raw_state, val);
-  state = th->state;
-  th->state = 0;
-  TH_JUMP_TAG(th, state);
 }
 
 typedef struct class_wrapper_struct {
@@ -1156,22 +959,6 @@ static VALUE cast_off_initialize_method_wrapper(VALUE self, VALUE cm, VALUE mid_
   return self;
 }
 
-int cast_off_method_wrapper_fptr_eq(VALUE self, VALUE (*fptr)(ANYARGS))
-{
-  if (rb_class_of(self) == rb_cCastOffMethodWrapper) {
-    method_wrapper_t *wrapper = DATA_PTR(self);
-    rb_method_entry_t *me = search_method(wrapper->class_or_module, wrapper->mid);
-
-    if (me && me->def->type == VM_METHOD_TYPE_CFUNC) {
-      return me->def->body.cfunc.func == fptr;
-    } else {
-      return 0;
-    }
-  } else {
-    rb_bug("should not be reached");
-  }
-}
-
 static VALUE cast_off_method_wrapper_eq(VALUE self, VALUE obj)
 {
   rb_method_entry_t *me0, *me1;
@@ -1308,6 +1095,9 @@ static VALUE cast_off_hook_class_definition_end(VALUE self, VALUE proc)
   return Qtrue;
 }
 
+#define IN_HEAP_P(th, ptr)  \
+  (!((th)->stack < (ptr) && (ptr) < ((th)->stack + (th)->stack_size)))
+
 static VALUE caller_info(rb_thread_t *th)
 {
   rb_control_frame_t *cfp;
@@ -1322,7 +1112,7 @@ static VALUE caller_info(rb_thread_t *th)
   while (1) {
     if ((VALUE *) cfp >= th->stack + th->stack_size) {
       if (lfp && IN_HEAP_P(th, lfp)) {
-	return Qnil;
+        return Qnil;
       }
       rb_bug("caller_info: should not be reached (0) %p", cfp->lfp);
     }
@@ -1339,7 +1129,7 @@ static VALUE caller_info(rb_thread_t *th)
       mid = rb_intern(RSTRING_PTR(name));
       me = search_method(klass, mid);
       if (!me) {
-	rb_bug("caller_info: should not be reached (1)");
+        rb_bug("caller_info: should not be reached (1)");
       }
       klass = me->klass;
       return rb_ary_new3(2, klass, ID2SYM(mid));
@@ -1488,6 +1278,12 @@ VALUE cast_off_singleton_method_added_p(VALUE dummy)
   rb_bug("cast_off_singleton_method_added_p: should not be reached(1)");
 }
 
+/* for deoptimization */
+rb_iseq_t *cast_off_Fixnum_times_iseq;
+rb_iseq_t *cast_off_Array_each_iseq;
+rb_iseq_t *cast_off_Array_map_iseq;
+rb_iseq_t *cast_off_Array_map_bang_iseq;
+
 void Init_cast_off(void)
 {
   rb_mCastOff = rb_define_module("CastOff");
@@ -1525,6 +1321,7 @@ void Init_cast_off(void)
   rb_define_method(rb_cCastOffInsnInfo, "instruction_pushnum", cast_off_instruction_pushnum, 1);
   rb_define_method(rb_cCastOffInsnInfo, "instruction_popnum", cast_off_instruction_popnum, 1);
   rb_define_method(rb_cCastOffInsnInfo, "instruction_stack_usage", cast_off_instruction_stack_usage, 1);
+  rb_define_method(rb_cCastOffInsnInfo, "class_information_in_ic", cast_off_instruction_class_information_in_ic, 1);
 
   rb_define_alloc_func(rb_cCastOffClassWrapper, cast_off_allocate_class_wrapper);
   rb_define_method(rb_cCastOffClassWrapper, "initialize", cast_off_initialize_class_wrapper, 2);
@@ -1572,6 +1369,7 @@ void Init_cast_off(void)
   rb_define_method(rb_cCastOffMethodWrapper, "marshal_load", cast_off_method_wrapper_marshal_load, 1);
 
   rb_define_const(rb_mCastOffCompiler, "Headers", gen_headers());
+  rb_define_const(rb_mCastOffCompiler, "DEOPTIMIZATION_ISEQ_TABLE", rb_hash_new());
 
   id_method_added = rb_intern("method_added");
   id_singleton_method_added = rb_intern("singleton_method_added");

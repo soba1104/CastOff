@@ -19,7 +19,7 @@ Same as the license of Ruby1.9.3 runtime.
 
 * Installation
 $gem build cast_off.gemspec
-$gem install cast_off-0.1.0.gem --local
+$gem install cast_off-0.2.0.gem --local
 
 Currently, CastOff supports Ruby1.9.3 only.
 So, if you attempt to use CastOff, please install CastOff under Ruby1.9.3 runtime. 
@@ -119,6 +119,8 @@ In above example, CastOff outputs following codes.
 -----------------------------------------------------
 require 'cast_off'
 CastOff.program_name = "foo.rb"
+CastOff.skip_configuration_check(true)
+CastOff.deoptimize(false)
 CastOff.use_default_configuration()
 CastOff.autoload()
 -----------------------------------------------------
@@ -143,16 +145,20 @@ Show compilation progress and internal information.
 Enable deoptimization.
 (Currently, CastOff does not support deoptimization of methods which use block.)
 
---initialize
-Clear profile information and re-compile target program.
+--clear
+Clear profile information and delete compiled methods.
+If you want to clear profile information and compiled methods of target name "foo",
+you should execute following command.
+$CastOff --clear --name=foo
 
 --threshold=COUNT
 Compile method which is executed more than COUNT.
 Default value is 100.
 
 --name=NAME
-Name compiled binary NAME.
+Name compiled methods NAME.
 This name is used for search of compiled methods.
+If you don't use this option, CastOff uses File.basename([programfile]) as name.
 
 -h, --help
 Show help.
@@ -166,11 +172,7 @@ On this step, CastOff decides compilation target methods.
 
 --step-2
 Execute second step of compilation.
-On this step, CastOff collects profile information.
-
---step-3
-Execute last step of compilation.
-On this step, CastOff compiles methods using profile information.
+On this step, CastOff collects profile information and compiles methods.
 
 --run
 Execute target program with compiled methods.
@@ -178,7 +180,7 @@ Execute target program with compiled methods.
 
 
 ** Use CastOff from script
-<<<Sorry, not yet documented. I would write this section in a few days. >>>
+<<<Sorry, not yet documented. >>>
 
 
 *** Specify class information to CastOff
@@ -213,7 +215,7 @@ You can specify class information to CastOff by followings.
 class_name => {:method_name1 => class_of_return_value, :method_name2 => [class_of_return_value1, class_of_return_value2, ...], ...}
 
 -Specify class of constants:
-<<<Sorry, not yet documented. I would write this section in a few days. >>>
+<<<Sorry, not yet documented. >>>
 
 
 *** Compilation
@@ -250,5 +252,5 @@ This API compiles passed block and executes.
 
 
 *** Compile options
-<<<Sorry, not yet documented. I would write this section in a few days. >>>
+<<<Sorry, not yet documented. >>>
 

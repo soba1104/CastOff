@@ -81,7 +81,7 @@ class UUID
       rand 0x100000000
     end
 
-    def read_state fp			  # :nodoc:
+    def read_state fp # :nodoc:
       fp.rewind
       Marshal.load fp.read
     end
@@ -134,46 +134,46 @@ class UUID
     def new clock=nil, time=Time.now, mac_addr=nil
       c = t = m = nil
       Dir.chdir Dir.tmpdir do
-	unless FileTest.exist? STATE_FILE then
-	  # Generate a pseudo MAC address because we have no pure-ruby way
-	  # to know  the MAC  address of the  NIC this system  uses.  Note
-	  # that cheating  with pseudo arresses here  is completely legal:
-	  # see Section 4.5 of RFC4122 for details.
-	  sha1 = Digest::SHA1.new
-	  256.times do
-	    r = [prand].pack "N"
-	    sha1.update r
-	  end
-	  str = sha1.digest
-	  r = rand 34 # 40-6
-	  node = str[r, 6] || str
-	  node = node.bytes.to_a
-	  node[0] |= 0x01 # multicast bit
-	  node = node.pack "C*"
-	  k = rand 0x40000
-	  open STATE_FILE, 'w' do |fp|
-	    fp.flock IO::LOCK_EX
-	    write_state fp, k, node
-	    fp.chmod 0o777 # must be world writable
-	  end
-	end
-	open STATE_FILE, 'r+' do |fp|
-	  fp.flock IO::LOCK_EX
-	  c, m = read_state fp
-	  c += 1 # important; increment here
-	  write_state fp, c, m
-	end
+        unless FileTest.exist? STATE_FILE then
+          # Generate a pseudo MAC address because we have no pure-ruby way
+          # to know  the MAC  address of the  NIC this system  uses.  Note
+          # that cheating  with pseudo arresses here  is completely legal:
+          # see Section 4.5 of RFC4122 for details.
+          sha1 = Digest::SHA1.new
+          256.times do
+            r = [prand].pack "N"
+            sha1.update r
+          end
+          str = sha1.digest
+          r = rand 34 # 40-6
+          node = str[r, 6] || str
+          node = node.bytes.to_a
+          node[0] |= 0x01 # multicast bit
+          node = node.pack "C*"
+          k = rand 0x40000
+          open STATE_FILE, 'w' do |fp|
+            fp.flock IO::LOCK_EX
+            write_state fp, k, node
+            fp.chmod 0o777 # must be world writable
+          end
+        end
+        open STATE_FILE, 'r+' do |fp|
+          fp.flock IO::LOCK_EX
+          c, m = read_state fp
+          c += 1 # important; increment here
+          write_state fp, c, m
+        end
       end
       c = clock & 0b11_1111_1111_1111 if clock
       m = mac_addr if mac_addr
       time = Time.at time if time.is_a? Float
       case time
       when Time
-	t = time.to_i * 10_000_000 + time.tv_usec * 10 + UNIXEpoch
+        t = time.to_i * 10_000_000 + time.tv_usec * 10 + UNIXEpoch
       when Integer
-	t = time + UNIXEpoch
+        t = time + UNIXEpoch
       else
-	raise TypeError, "cannot convert ``#{time}'' into Time."
+        raise TypeError, "cannot convert ``#{time}'' into Time."
       end
 
       tl = t & 0xFFFF_FFFF
@@ -248,7 +248,7 @@ class UUID
   # The IEEE 802 address in a hexadecimal format
   def node
     m = unpack[5].unpack 'C*'
-		'%02x%02x%02x%02x%02x%02x' % m
+                '%02x%02x%02x%02x%02x%02x' % m
   end
   alias mac_address node
   alias ieee802 node
@@ -257,13 +257,13 @@ class UUID
   def to_s
     a = unpack
     a[-1] = mac_address
-		"%08x-%04x-%04x-%02x%02x-%s" % a
+                "%08x-%04x-%04x-%02x%02x-%s" % a
   end
   alias guid to_s
 
   # Convert into a RFC4122-comforming URN representation
   def to_uri
-		"urn:uuid:" + self.to_s
+                "urn:uuid:" + self.to_s
   end
   alias urn to_uri
   alias inspect to_uri
@@ -321,14 +321,3 @@ module Kernel
   end
 end
 
-
-# Local Variables:
-# mode: ruby
-# coding: utf-8
-# indent-tabs-mode: t
-# tab-width: 3
-# ruby-indent-level: 3
-# fill-column: 79
-# default-justification: full
-# End:
-# vi: ts=3 sw=3

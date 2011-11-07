@@ -27,25 +27,25 @@ module Compiler
       attr_reader :bind, :nest
 
       def initialize(bind)
-	bug() unless bind.instance_of?(Binding)
-	@bind = bind
-	nest = eval("Module.nesting", @bind)
-	pre = ""
-	@nest = nest.reverse.map{|n|
-	  n = n.to_s
-	  if n[pre]
-	    replen = pre.length
-	    replen += 2 unless pre.empty?
-	    pre = n
-	    n.slice(replen, n.length - replen)
-	  else
-	    n
-	  end
-	}
-	begin
-	  marshal_load(@nest) # validation
-	rescue NameError => e
-	  raise(UnsupportedError.new(<<-EOS))
+        bug() unless bind.instance_of?(Binding)
+        @bind = bind
+        nest = eval("Module.nesting", @bind)
+        pre = ""
+        @nest = nest.reverse.map{|n|
+          n = n.to_s
+          if n[pre]
+            replen = pre.length
+            replen += 2 unless pre.empty?
+            pre = n
+            n.slice(replen, n.length - replen)
+          else
+            n
+          end
+        }
+        begin
+          marshal_load(@nest) # validation
+        rescue NameError => e
+          raise(UnsupportedError.new(<<-EOS))
 
 Failed to construct binding from Module.nesting result (#{nest}).
 Currently, CastOff doesn't support binding which cannot construct from Module.nesting result.
@@ -57,60 +57,60 @@ o = Object
 
 --- error message ---
 #{e.message}
-	  EOS
-	rescue => e
-	  bug("e = #{e}, @nest = #{@nest}, nest = #{nest}")
-	end
+          EOS
+        rescue => e
+          bug("e = #{e}, @nest = #{@nest}, nest = #{nest}")
+        end
       end
 
       def marshal_dump()
-	@nest
+        @nest
       end
 
       def marshal_load(nest)
-	o = Object
-	ary = []
-	nest.each do |n|
-	  n.split("::").each do |__n|
-	    o = o.const_get(__n)
-	  end
-	  ary << [n, o]
-	end
-	s0 = []
-	s1 = []
-	ary.each_with_index do |no, idx|
-	  n, o = no
-	  case o
-	  when Class
-	    decl = "class"
-	  when Module
-	    decl = "module"
-	  else
-	    bug("obj = #{o}")
-	  end
-	  indent = "  " * idx
-	  s0 << indent + "#{decl} #{n}"
-	  s1 << indent + "end"
-	end
-	indent = "  " * ary.size
-	eval_str = s0.join("\n") + "\n#{indent}binding\n" + s1.reverse.join("\n")
-	bind = eval(eval_str, TOPLEVEL_BINDING)
-	bug() unless bind.instance_of?(Binding)
-	@bind = bind
-	@nest = nest
+        o = Object
+        ary = []
+        nest.each do |n|
+          n.split("::").each do |__n|
+            o = o.const_get(__n)
+          end
+          ary << [n, o]
+        end
+        s0 = []
+        s1 = []
+        ary.each_with_index do |no, idx|
+          n, o = no
+          case o
+          when Class
+            decl = "class"
+          when Module
+            decl = "module"
+          else
+            bug("obj = #{o}")
+          end
+          indent = "  " * idx
+          s0 << indent + "#{decl} #{n}"
+          s1 << indent + "end"
+        end
+        indent = "  " * ary.size
+        eval_str = s0.join("\n") + "\n#{indent}binding\n" + s1.reverse.join("\n")
+        bind = eval(eval_str, TOPLEVEL_BINDING)
+        bug() unless bind.instance_of?(Binding)
+        @bind = bind
+        @nest = nest
       end
 
       def eql?(other)
-	return false unless other.instance_of?(BindingWrapper)
-	@nest == other.nest
+        return false unless other.instance_of?(BindingWrapper)
+        @nest == other.nest
       end
 
       def ==(other)
-	eql?(other)
+        eql?(other)
       end
 
       def hash()
-	bug()
+        bug()
       end
     end
 
@@ -120,82 +120,82 @@ o = Object
       @variable_configuration = {}
       case configuration
       when Hash
-	configuration.each do |(k, v)|
-	  case k
-	  when Array
-	    k.each do |var|
-	      invalid_configuration() unless var.is_a?(Symbol)
-	      case v
-	      when Class
-		# [:var0, :var1, ...] => class
-		a = @variable_configuration[var] || []
-		a |= [ClassWrapper.new(v, true)]
-		@variable_configuration[var] = a
-	      when Array
-		# [:var0, :var1, ...] => [class0, class1, ...]
-		v.each {|t| invalid_configuration() unless t.is_a?(Class)}
-		a = @variable_configuration[var] || []
-		a |= v.map{|t| ClassWrapper.new(t, true)}
-		@variable_configuration[var] = a
-	      else
-		invalid_configuration()
-	      end
-	    end
-	  when Symbol
-	    case v
-	    when Class
-	      # :var => class
-	      a = @variable_configuration[k] || []
-	      a |= [ClassWrapper.new(v, true)]
-	      @variable_configuration[k] = a
-	    when Array
-	      # :var => [class0, class1, ...]
-	      v.each {|t| invalid_configuration() unless t.is_a?(Class)}
-	      a = @variable_configuration[k] || []
-	      a |= v.map{|t| ClassWrapper.new(t, true)}
-	      @variable_configuration[k] = a
-	    else
-	      invalid_configuration("variable class should be specified by Class or Array")
-	    end
-	  when Class
-	    # class => {:method_name => class, ...}
-	    case v
-	    when Hash
-	      k = ClassWrapper.new(k, true)
-	      h = @return_value_configuration[k] || {}
-	      v.each do |(id, type)|
-		invalid_configuration() unless id.is_a?(Symbol)
-		case type
-		when Class
-		  a = h[id] || []
-		  a |= [ClassWrapper.new(type, true)]
-		  h[id] = a
-		when Array
-		  type.each {|t| invalid_configuration() unless t.is_a?(Class) }
-		  a = h[id] || []
-		  a |= type.map{|t| ClassWrapper.new(t, true)}
-		  h[id] = a
-		else
-		  invalid_configuration()
-		end
-	      end
-	      @return_value_configuration[k] = h
-	    else
-	      invalid_configuration()
-	    end
-	  end
-	end
+        configuration.each do |(k, v)|
+          case k
+          when Array
+            k.each do |var|
+              invalid_configuration() unless var.is_a?(Symbol)
+              case v
+              when Class
+                # [:var0, :var1, ...] => class
+                a = @variable_configuration[var] || []
+                a |= [ClassWrapper.new(v, true)]
+                @variable_configuration[var] = a
+              when Array
+                # [:var0, :var1, ...] => [class0, class1, ...]
+                v.each {|t| invalid_configuration() unless t.is_a?(Class)}
+                a = @variable_configuration[var] || []
+                a |= v.map{|t| ClassWrapper.new(t, true)}
+                @variable_configuration[var] = a
+              else
+                invalid_configuration()
+              end
+            end
+          when Symbol
+            case v
+            when Class
+              # :var => class
+              a = @variable_configuration[k] || []
+              a |= [ClassWrapper.new(v, true)]
+              @variable_configuration[k] = a
+            when Array
+              # :var => [class0, class1, ...]
+              v.each {|t| invalid_configuration() unless t.is_a?(Class)}
+              a = @variable_configuration[k] || []
+              a |= v.map{|t| ClassWrapper.new(t, true)}
+              @variable_configuration[k] = a
+            else
+              invalid_configuration("variable class should be specified by Class or Array")
+            end
+          when Class
+            # class => {:method_name => class, ...}
+            case v
+            when Hash
+              k = ClassWrapper.new(k, true)
+              h = @return_value_configuration[k] || {}
+              v.each do |(id, type)|
+                invalid_configuration() unless id.is_a?(Symbol)
+                case type
+                when Class
+                  a = h[id] || []
+                  a |= [ClassWrapper.new(type, true)]
+                  h[id] = a
+                when Array
+                  type.each {|t| invalid_configuration() unless t.is_a?(Class) }
+                  a = h[id] || []
+                  a |= type.map{|t| ClassWrapper.new(t, true)}
+                  h[id] = a
+                else
+                  invalid_configuration()
+                end
+              end
+              @return_value_configuration[k] = h
+            else
+              invalid_configuration()
+            end
+          end
+        end
       else
-	invalid_configuration()
+        invalid_configuration()
       end
       @return_value_configuration.each do |(k, v)|
-	bug() unless k.is_a?(ClassWrapper)
-	v.each do |(mid, ary)|
-	  ary.each{|t| bug(t) unless t.is_a?(ClassWrapper)}
-	end
+        bug() unless k.is_a?(ClassWrapper)
+        v.each do |(mid, ary)|
+          ary.each{|t| bug(t) unless t.is_a?(ClassWrapper)}
+        end
       end
       @variable_configuration.values.each do |ary|
-	ary.each{|t| bug(t) unless t.is_a?(ClassWrapper)}
+        ary.each{|t| bug(t) unless t.is_a?(ClassWrapper)}
       end
       @method_information_usage = []
       @option_table_configuration = {}
@@ -231,61 +231,65 @@ o = Object
       bug() unless @bind.instance_of?(BindingWrapper)
       bug() unless @bind.bind.instance_of?(Binding)
       begin
-	eval(str, @bind.bind)
+        eval(str, @bind.bind)
       rescue
-	raise(CastOff::CompileError.new("Failed to evaluate < #{str} > with passed binding"))
+        raise(CastOff::CompileError.new("Failed to evaluate < #{str} > with passed binding"))
       end
     end
 
     def union(conf)
       bug() unless conf.instance_of?(Configuration)
       conf.variable_configuration.each do |(sym, src)|
-	bug() unless src.instance_of?(Array)
-	dst = (@variable_configuration[sym] ||= [])
-	(src + dst).each do |cw|
-	  bug() unless cw.instance_of?(ClassWrapper)
-	  bug() if cw.singleton?
-	  bug() if cw.contain_class == SingletonClass
-	end
-	@variable_configuration[sym] = (dst | src)
+        bug() unless src.instance_of?(Array)
+        dst = (@variable_configuration[sym] ||= [])
+        (src + dst).each do |cw|
+          bug() unless cw.instance_of?(ClassWrapper)
+          bug() if cw.singleton?
+          bug() if cw.contain_class == SingletonClass
+        end
+        @variable_configuration[sym] = (dst | src)
       end
 
       conf.return_value_configuration.each do |(cw0, src0)|
-	bug() unless src0.instance_of?(Hash)
-	bug() unless cw0.instance_of?(ClassWrapper)
-	bug() if cw0.singleton?
-	bug() if cw0.contain_class == SingletonClass
-	dst0 = (@return_value_configuration[cw0] ||= {})
-	src0.each do |(sym, src1)|
-	  bug() unless src1.instance_of?(Array)
-	  dst1 = (dst0[sym] ||= [])
-	  (src1 + dst1).each do |cw1|
-	    bug() unless cw1.instance_of?(ClassWrapper)
-	    bug() if cw1.singleton?
-	    bug() if cw1.contain_class == SingletonClass
-	  end
-	  dst0[sym] = (dst1 | src1)
-	end
+        bug() unless src0.instance_of?(Hash)
+        bug() unless cw0.instance_of?(ClassWrapper)
+        bug() if cw0.singleton?
+        bug() if cw0.contain_class == SingletonClass
+        dst0 = (@return_value_configuration[cw0] ||= {})
+        src0.each do |(sym, src1)|
+          bug() unless src1.instance_of?(Array)
+          dst1 = (dst0[sym] ||= [])
+          (src1 + dst1).each do |cw1|
+            bug() unless cw1.instance_of?(ClassWrapper)
+            bug() if cw1.singleton?
+            bug() if cw1.contain_class == SingletonClass
+          end
+          dst0[sym] = (dst1 | src1)
+        end
       end
+      return if @bind
+      return unless conf.bind
+      bug() unless conf.bind.instance_of?(BindingWrapper)
+      @bind = conf.bind
     end
 
     def update_variable_configuration(update_hash)
       update_p = false
       update_hash.each do |(k, v)|
-	bug() unless k.instance_of?(Symbol)
-	bug() unless v.instance_of?(Array)
-	next if v.include?(SingletonClass)
-	# variable annotation
-	a0 = v
-	a0 = a0.map{|c|
-	  bug(c) unless c.is_a?(Class)
-	  bug()  unless c != SingletonClass
-	  ClassWrapper.new(c, true)
-	}
-	a1 = @variable_configuration[k] || []
-	update_p = true unless (a0 - a1).empty?
-	a1 |= a0
-	@variable_configuration[k] = a1
+        bug() unless k.instance_of?(Symbol)
+        bug() unless v.instance_of?(Array)
+        next if v.include?(SingletonClass)
+        # variable annotation
+        a0 = v
+        a0 = a0.map{|c|
+          bug(c) unless c.is_a?(Class)
+          bug()  unless c != SingletonClass
+          ClassWrapper.new(c, true)
+        }
+        a1 = @variable_configuration[k] || []
+        update_p = true unless (a0 - a1).empty?
+        a1 |= a0
+        @variable_configuration[k] = a1
       end
       update_p
     end
@@ -293,26 +297,26 @@ o = Object
     def update_return_value_configuration(update_hash)
       update_p = false
       update_hash.each do |(k, v)|
-	bug() unless k.instance_of?(Class)
-	bug() unless v.instance_of?(Hash)
-	next if k == SingletonClass
-	# return value annotation
-	h0 = v
-	k  = ClassWrapper.new(k, true)
-	h1 = @return_value_configuration[k] || {}
-	h0.each do |(mid, klasses0)|
-	  next if klasses0.include?(SingletonClass)
-	  klasses0 = klasses0.map{|c|
-	    bug(c) unless c.is_a?(Class)
-	    bug()  unless c != SingletonClass
-	    ClassWrapper.new(c, true)
-	  }
-	  klasses1 = h1[mid] || []
-	  update_p = true unless (klasses0 - klasses1).empty?
-	  klasses1 |= klasses0
-	  h1[mid] = klasses1
-	end
-	@return_value_configuration[k] = h1
+        bug() unless k.instance_of?(Class)
+        bug() unless v.instance_of?(Hash)
+        next if k == SingletonClass
+        # return value annotation
+        h0 = v
+        k  = ClassWrapper.new(k, true)
+        h1 = @return_value_configuration[k] || {}
+        h0.each do |(mid, klasses0)|
+          next if klasses0.include?(SingletonClass)
+          klasses0 = klasses0.map{|c|
+            bug(c) unless c.is_a?(Class)
+            bug()  unless c != SingletonClass
+            ClassWrapper.new(c, true)
+          }
+          klasses1 = h1[mid] || []
+          update_p = true unless (klasses0 - klasses1).empty?
+          klasses1 |= klasses0
+          h1[mid] = klasses1
+        end
+        @return_value_configuration[k] = h1
       end
       update_p
     end
@@ -320,39 +324,39 @@ o = Object
     def compact()
       rejects0 = []
       @return_value_configuration.each do |(k0, v0)|
-	rejects1 = []
-	v0.each{|(k1, v1)| rejects1 << k1 if v1.size > 5}
-	rejects1.each{|v| v0.delete(v)}
-	rejects0 << k0 if v0.empty?
+        rejects1 = []
+        v0.each{|(k1, v1)| rejects1 << k1 if v1.size > 5}
+        rejects1.each{|v| v0.delete(v)}
+        rejects0 << k0 if v0.empty?
       end
       rejects0.each{|v| @return_value_configuration.delete(v)}
       rejects0 = []
       @variable_configuration.each do |(k0, v0)|
-	rejects0 << k0 if v0.size > 5
+        rejects0 << k0 if v0.size > 5
       end
       rejects0.each{|v| @variable_configuration.delete(v)}
     end
 
     def validate()
       begin
-	dump()
+        dump()
       rescue TypeError => e
-	raise(UnsupportedError.new(<<-EOS))
+        raise(UnsupportedError.new(<<-EOS))
 
 Failed to marshal dump configuration.
 Configuration object should be able to marshal dump.
 Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN).
 --- Marshal.dump error message ---
 #{e.message}
-	EOS
+        EOS
       end
     end
 
     def dump(io = nil)
       if io
-	Marshal.dump(self, io)
+        Marshal.dump(self, io)
       else
-	Marshal.dump(self)
+        Marshal.dump(self)
       end
     end
 
@@ -380,12 +384,12 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
     def to_s
       ary = []
       @variable_configuration.each do |(k, v)|
-	bug() unless k.instance_of?(Symbol)
-	ary << "#{k.inspect} => #{v.inspect}"
+        bug() unless k.instance_of?(Symbol)
+        ary << "#{k.inspect} => #{v.inspect}"
       end
       @return_value_configuration.each do |(k, v)|
-	bug() unless k.instance_of?(ClassWrapper)
-	ary << "#{k.inspect} => #{inspect_method_return_value(v)}"
+        bug() unless k.instance_of?(ClassWrapper)
+        ary << "#{k.inspect} => #{inspect_method_return_value(v)}"
       end
       "{#{ary.join(",\n ")}}"
     end
@@ -393,9 +397,9 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
     def inspect_method_return_value(h)
       bug() unless h.instance_of?(Hash)
       '{' + h.map{|(mid, classes)|
-	bug() unless mid.instance_of?(Symbol)
-	bug() unless classes.instance_of?(Array)
-	"#{mid.inspect} => #{classes.inspect}"
+        bug() unless mid.instance_of?(Symbol)
+        bug() unless classes.instance_of?(Array)
+        "#{mid.inspect} => #{classes.inspect}"
       }.join(', ') + '}'
     end
 
@@ -2155,15 +2159,15 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
     DIRECT_CALL_TARGETS.map! do |(obj, mid, t)|
       case t
       when :class
-	bug() unless obj.instance_of?(Class)
-	MethodWrapper.new(ClassWrapper.new(obj, true), mid)
+        bug() unless obj.instance_of?(Class)
+        MethodWrapper.new(ClassWrapper.new(obj, true), mid)
       when :module
-	bug() unless obj.instance_of?(Module)
-	MethodWrapper.new(ModuleWrapper.new(obj), mid)
+        bug() unless obj.instance_of?(Module)
+        MethodWrapper.new(ModuleWrapper.new(obj), mid)
       when :singleton
-	MethodWrapper.new(ClassWrapper.new(obj, false), mid)
+        MethodWrapper.new(ClassWrapper.new(obj, false), mid)
       else
-	bug()
+        bug()
       end
     end
 
@@ -2174,19 +2178,19 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
 
     CastOff::Compiler.class_eval do
       def should_be_call_directly(obj, mid, type)
-	case type
-	when :class
-	  bug() unless obj.instance_of?(Class)
-	  w = ClassWrapper.new(obj, true)
-	when :module
-	  bug() unless obj.instance_of?(Module)
-	  w = ModuleWrapper.new(obj)
-	when :singleton
-	  w = ClassWrapper.new(obj, false)
-	else
-	  bug()
-	end
-	DIRECT_CALL_TARGETS.push(MethodWrapper.new(w, mid))
+        case type
+        when :class
+          bug() unless obj.instance_of?(Class)
+          w = ClassWrapper.new(obj, true)
+        when :module
+          bug() unless obj.instance_of?(Module)
+          w = ModuleWrapper.new(obj)
+        when :singleton
+          w = ClassWrapper.new(obj, false)
+        else
+          bug()
+        end
+        DIRECT_CALL_TARGETS.push(MethodWrapper.new(w, mid))
       end
     end
 
@@ -2195,9 +2199,9 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
       bug() unless klass.is_a?(ClassWrapper)
       bug() unless mid.is_a?(Symbol)
       begin
-	me = MethodWrapper.new(klass, mid)
+        me = MethodWrapper.new(klass, mid)
       rescue CompileError
-	return true
+        return true
       end
       me = MethodInformations[me]
       return true unless me
@@ -2211,55 +2215,52 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
       bug() unless klass.is_a?(ClassWrapper)
       bug() unless mid.is_a?(Symbol)
       begin
-	me = MethodWrapper.new(klass, mid)
+        me = MethodWrapper.new(klass, mid)
       rescue CompileError
-	return false
+        return false
       end
       me = MethodInformations[me]
       return false unless me
       bug() unless me.instance_of?(MethodInformation)
       if recv_p
-	return false if me.destroy_reciever?
-	return false if me.escape_reciever?
+        return false if me.destroy_reciever?
+        return false if me.escape_reciever?
       else
-	return false if me.destroy_arguments?
-	return false if me.escape_arguments?
+        return false if me.destroy_arguments?
+        return false if me.escape_arguments?
       end
       true
     end
 
     OPTION_TABLE = {
       # class_variable => [default_value, compare_target, define_extra_reader]
-      :@@enable_inline_api				=> [true,  true,  false],
-      :@@inject_guard					=> [true,  true,  false],
-      :@@array_conservative				=> [true,  true,  false],
-      :@@reuse_compiled_binary				=> [true, false, true],
-      :@@allow_builtin_variable_incompatibility 	=> [false, true,  false],
-      :@@prefetch_constant				=> [true,  true,  false],
-      :@@deoptimize					=> [false, true,  false],
-      :@@development					=> [false, true,  true],
-      :@@use_profile_results				=> [false, false, false],
-      :@@alert_override					=> [true,  true,  false],
-      :@@skip_configuration_check			=> [false, false, true],
+      :@@enable_inline_api                       => [true,  true,  false],
+      :@@inject_guard                            => [true,  true,  false],
+      :@@array_conservative                      => [true,  true,  false],
+      :@@reuse_compiled_binary                   => [true,  false, true],
+      :@@allow_builtin_variable_incompatibility  => [false, true,  false],
+      :@@prefetch_constant                       => [true,  true,  false],
+      :@@deoptimize                              => [false, true,  false],
+      :@@development                             => [false, true,  true],
+      :@@alert_override                          => [true,  true,  false],
+      :@@skip_configuration_check                => [false, false, true],
 
       # For base configuration
-      :@@clear_base_configuration			=> [false, false, true],
-      :@@update_base_configuration			=> [false, false, true],
-      :@@use_base_configuration				=> [true, false, true],
+      :@@use_base_configuration                  => [true,  false, true],
 
       # For experiment
-      :@@force_dispatch_method				=> [false, true,  false],
-      :@@force_duplicate_literal			=> [false, true,  false],
-      :@@force_inline_block				=> [false, true,  false],
+      :@@force_dispatch_method                   => [false, true,  false],
+      :@@force_duplicate_literal                 => [false, true,  false],
+      :@@force_inline_block                      => [false, true,  false],
 
       # Not implemented
-      :@@enable_trace					=> [false, true,  false],
+      :@@enable_trace                            => [false, true,  false],
     }
     OPTION_TABLE.dup.each do |(cvar, val)|
       OPTION_TABLE[cvar] = {
-	:default_value       => val[0],
-	:compare_target      => val[1],
-	:define_extra_reader => val[2],
+        :default_value       => val[0],
+        :compare_target      => val[1],
+        :define_extra_reader => val[2],
       }
     end
     OPTION_TABLE.freeze()
@@ -2267,76 +2268,76 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
     def same_option?(other_option)
       return false unless @option_table_configuration.size == other_option.size
       @option_table_configuration.each do |(cvar, val)|
-	return false unless OPTION_TABLE.include?(cvar)
-	return false unless other_option.include?(cvar)
-	compare_target = OPTION_TABLE[cvar][:compare_target]
-	bug() if compare_target.nil?
-	next unless compare_target
-	return false unless val == other_option[cvar]
+        return false unless OPTION_TABLE.include?(cvar)
+        return false unless other_option.include?(cvar)
+        compare_target = OPTION_TABLE[cvar][:compare_target]
+        bug() if compare_target.nil?
+        next unless compare_target
+        return false unless val == other_option[cvar]
       end
       true
     end
 
     CastOff::Compiler.__send__(:define_method, :clear_settings) do
       OPTION_TABLE.each do |(cvar, val)|
-	CastOff::Compiler::Configuration.class_variable_set(cvar, val[:default_value])
+        CastOff::Compiler::Configuration.class_variable_set(cvar, val[:default_value])
       end
     end
 
     OPTION_TABLE.each do|(cvar, val)|
       mid = cvar.slice(2, cvar.size - 2)
       CastOff::Compiler.__send__(:define_method, mid) do |bool|
-	CastOff::Compiler::Configuration.class_variable_set(cvar, bool)
+        CastOff::Compiler::Configuration.class_variable_set(cvar, bool)
       end
 
       define_method(mid) do |val|
-	@option_table_configuration[cvar] = val
+        @option_table_configuration[cvar] = val
       end
 
       define_method("#{mid}?") do
-	@option_table_configuration[cvar]
+        @option_table_configuration[cvar]
       end
 
       next unless val[:define_extra_reader]
 
       CastOff::Compiler.__send__(:define_method, "#{mid}?") do
-	CastOff::Compiler::Configuration.class_variable_get(cvar)
+        CastOff::Compiler::Configuration.class_variable_get(cvar)
       end
     end
 
     MethodInformations = {}
     CastOff::Compiler.module_eval do
       def use_default_configuration()
-	MethodInformation.use_builtin_library_information()
+        MethodInformation.use_builtin_library_information()
       end
 
       def set_method_information(km, mid, type, info)
-	case type
-	when :class
-	  raise(ArgumentError.new("invalid first argument #{km}")) unless km.is_a?(Class)
-	  w = ClassWrapper.new(km, true)
-	when :module
-	  raise(ArgumentError.new("invalid first argument #{km}")) unless km.is_a?(Module)
-	  w = ModuleWrapper.new(km)
-	when :singleton
-	  w = ClassWrapper.new(km, false)
-	else
-	  raise(ArgumentError.new("invalid argument"))
-	end
-	begin
-	  me = MethodWrapper.new(w, mid)
-	rescue CompileError => e
-	  raise(ArgumentError.new(e.message))
-	end
-	MethodInformations[me] = MethodInformation.new(me, info)
+        case type
+        when :class
+          raise(ArgumentError.new("invalid first argument #{km}")) unless km.is_a?(Class)
+          w = ClassWrapper.new(km, true)
+        when :module
+          raise(ArgumentError.new("invalid first argument #{km}")) unless km.is_a?(Module)
+          w = ModuleWrapper.new(km)
+        when :singleton
+          w = ClassWrapper.new(km, false)
+        else
+          raise(ArgumentError.new("invalid argument"))
+        end
+        begin
+          me = MethodWrapper.new(w, mid)
+        rescue CompileError => e
+          raise(ArgumentError.new(e.message))
+        end
+        MethodInformations[me] = MethodInformation.new(me, info)
       end
     end
 
     def check_method_information_usage()
       @method_information_usage.each do |me0|
-	me1 = MethodInformations[me0.method]
-	return false unless me1
-	return false unless me0 == me1
+        me1 = MethodInformations[me0.method]
+        return false unless me1
+        return false unless me0 == me1
       end
       true
     end
@@ -2345,9 +2346,9 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
       bug() unless klass.is_a?(ClassWrapper)
       bug() unless mid.is_a?(Symbol)
       begin
-	me = MethodWrapper.new(klass, mid)
+        me = MethodWrapper.new(klass, mid)
       rescue CompileError
-	return false
+        return false
       end
       me = MethodInformations[me]
       return false unless me

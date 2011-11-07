@@ -1,6 +1,7 @@
 # coding=utf-8
 
-module CastOff::Compiler
+module CastOff
+  module Compiler
   module SimpleIR
     class GuardIR < IR
       attr_reader :guard_value, :variables_without_result, :variables, :result_variable, :values
@@ -10,41 +11,70 @@ module CastOff::Compiler
 %  @information.undefined_variables.each do |var|
 %    @insn.iseq.initialize_for_guards(var) if var.is_a?(LocalVariable)
 %  end
-%  s = @insn.iseq
-%  d = @insn.depth
-%  simple = s.root?
-%  while s do
+%  top = @insn.iseq
+%  a = [@insn.iseq]
+%  a = @insn.iseq.ancestors.reverse + a if @translator.inline_block?
+%  stacks = a.map{|s| s.depth}
+%  stacks.shift
+%  stacks.push(@insn.depth)
+%  stacks = stacks.zip(a.map{|s| s.depth}).map{|d0, d1| d0 - d1}
+%  valid = @translator.inline_block? ? @insn.depth : (@insn.depth - @insn.iseq.depth)
+%  bug() unless stacks.inject(0){|sum, d| sum + d} == valid
+%  a.each_with_index do |s, idx|
   {
 %    local_c = s.lvars.size()
-%    stack_c = d - s.depth
-    rb_iseq_t *iseq = <%= s %>;
+%    stack_c = stacks[idx]
+%    if @translator.inline_block?
     int local_c = <%= local_c %>;
     VALUE local_v[<%= local_c %>];
+%    end
     int stack_c = <%= stack_c %>;
     VALUE stack_v[<%= stack_c %>];
-%    index = 0
-%    s.lvars.each do |var_name, var_id, var_annotation|
+    rb_iseq_t *iseq = <%= s %>;
+%    s.lvars.each_with_index do |(var_name, var_id, op_idx, depth, var_annotation), i|
 %      if @translator.inline_block?
-    local_v[<%= index %>] = local<%= var_id %>_<%= var_name %>; /* FIXME */
-%      else
-    local_v[<%= index %>] = lvp[<%= var_id %>]; /* FIXME */
+    local_v[<%= i %>] = local<%= var_id %>_<%= var_name %>; /* FIXME */
 %      end
-%      index += 1
 %    end
-%    index = stack_c - 1
-%    while d > s.depth do
-%      d -= 1
-    stack_v[<%= index %>] = tmp<%= d %>;
-%      index -= 1
+%    stack_c.times do |i|
+    stack_v[<%= i %>] = tmp<%= s.depth + i %>;
 %    end
-%  if simple
-    return cast_off_deoptimize_simple(self, iseq, pc, local_c, local_v, stack_c, stack_v);
-%  else
-    cast_off_deoptimize_not_implemented(self, iseq, pc, local_c, local_v, stack_c, stack_v);
-%  end
+%    method_p = (s.itype == :method ? 1 : 0)
+%    lambda_p = (s.itype == :method ? 0 : 'lambda_p')
+%    top_p    = (top == s ? 1 : 0)
+%    bottom_p = (s.root? ? 1 : 0)
+%    if @translator.inline_block?
+%      if s.root?
+    thval = rb_thread_current();
+    th = DATA_PTR(thval);
+    specval = 0;
+    lfp = 0;
+    dfp = 0;
+%      else
+    <%= s.loopkey.dopt_func %>(&<%= s.loopkey %>, specval);
+%      end
+%      if s == top
+    return cast_off_deoptimize_inline(self, iseq, NULL, pc, local_c, local_v, stack_c, stack_v, <%= top_p %>, <%= bottom_p %>, <%= method_p %>, lfp, dfp);
+%      else
+%        bug() unless idx + 1 < a.size
+%        biseq = a[idx + 1]
+%        bug() unless biseq.parent_pc
+    specval = cast_off_deoptimize_inline(self, iseq, <%= biseq %>, <%= biseq.parent_pc %>, local_c, local_v, stack_c, stack_v, <%= top_p %>, <%= bottom_p %>, <%= method_p %>, lfp, dfp);
+%        if s.root?
+    lfp = th->cfp->lfp;
+%        end
+    dfp = th->cfp->dfp;
+%      end
+%    else
+    {
+      VALUE return_value = cast_off_deoptimize_noinline(self, iseq, pc, stack_c, stack_v, <%= method_p %>, <%= lambda_p %>, <%= s.parent_pc ? s.parent_pc : -1 %>);
+%      if s.catch_exception?
+      TH_POP_TAG2();
+%      end
+      return return_value;
+    }
+%    end
   }
-%    break if !@translator.inline_block?
-%    s = s.parent
 %  end
   rb_bug("should not be reached");
       EOS
@@ -66,6 +96,31 @@ expected <%= @guard_value.types %> but %s, %s\\n\\
       GUARD_TEMPLATE = ERB.new(<<-EOS, 0, '%-', 'g0')
 %bug() if @guard_value.undefined? || @guard_value.dynamic?
 <%= guard_begin() %>
+#if 1
+    if(!sampling_table) register_sampling_table(rb_hash_new());
+%  get_definition(@guard_value).each do |defn|
+%    case defn
+%    when SubIR
+%      case defn.src
+%      when LocalVariable, DynamicVariable, InstanceVariable, ClassVariable, GlobalVariable, Self
+    sampling_variable(<%= @guard_value %>, ID2SYM(rb_intern("<%= defn.src.source %>")));
+%      when ConstWrapper, Literal
+%        # Fixme
+%      else
+%        bug(defn.src)
+%      end
+%    when InvokeIR
+%      recv = defn.param_variables.first
+%      bug() if recv.dynamic?
+%      recv.types.each do |k|
+%        recv_class = @translator.get_c_classname(k)
+%        bug() unless recv_class
+    __sampling_poscall(<%= @guard_value %>, <%= recv_class %>, ID2SYM(rb_intern("<%= defn.method_id %>")));
+%      end
+%    end
+%  end
+    rb_funcall(rb_mCastOff, rb_intern("re_compile"), 2, rb_str_new2("<%= @translator.signiture() %>"), sampling_table_val);
+#endif
 %if @configuration.deoptimize?
     goto <%= @insn.guard_label %>;
 %  @insn.iseq.inject_guard(@insn, GUARD_DEOPTIMIZATION_TEMPLATE.trigger(binding))
@@ -78,22 +133,22 @@ expected <%= @guard_value.types %> but %s, %s\\n\\
 
       GUARD_CHECK_TEMPLATE = ERB.new(<<-EOS, 0, '%-', 'g3')
 %if @guard_value.is_just?(NilClass)
-  if (!NIL_P(<%= @guard_value %>)) {
+  if (UNLIKELY(!NIL_P(<%= @guard_value %>))) {
 %elsif @guard_value.is_just?(TrueClass)
-  if (<%= @guard_value %> != Qtrue) {
+  if (UNLIKELY(<%= @guard_value %> != Qtrue)) {
 %elsif @guard_value.is_just?(FalseClass)
-  if (<%= @guard_value %> != Qfalse) {
+  if (UNLIKELY(<%= @guard_value %> != Qfalse)) {
 %elsif @guard_value.is_just?(Symbol)
-  if (!SYMBOL_P(<%= @guard_value %>)) {
+  if (UNLIKELY(!SYMBOL_P(<%= @guard_value %>))) {
 %elsif @guard_value.is_just?(Fixnum)
-  if (!FIXNUM_P(<%= @guard_value %>)) {
+  if (UNLIKELY(!FIXNUM_P(<%= @guard_value %>))) {
 %else
 %  if simple?
 %    func = @translator.declare_class_check_function(CLASS_CHECK_FUNCTION_TEMPLATE_SIMPLE.trigger(binding))
-  if (!<%= func %>(<%= @guard_value %>)) {
+  if (UNLIKELY(!<%= func %>(<%= @guard_value %>))) {
 %  else
 %    func = @translator.declare_class_check_function(CLASS_CHECK_FUNCTION_TEMPLATE_COMPLEX.trigger(binding))
-  if (!<%= func %>(<%= @guard_value %>, rb_class_of(<%= @guard_value %>))) {
+  if (UNLIKELY(!<%= func %>(<%= @guard_value %>, rb_class_of(<%= @guard_value %>)))) {
 %  end
 %end
 
@@ -160,118 +215,118 @@ static int <CLASS_CHECK_FUNCTION_NAME>_failed(VALUE obj, VALUE klass)
       EOS
 
       def initialize(val, vars, insn, cfg)
-	super(insn, cfg)
-	@guard_value = val
-	bug() unless @guard_value.is_a?(Variable)
-	@values = [@guard_value]
-	@variables = []
-	@variables_without_result = []
-	@variables << @guard_value
-	@variables_without_result << @guard_value
-	@result_variable = nil
-	@dependent_variables = get_dependent_variables(vars)
-	@source = @insn.source
-	@source = @source.empty? ? nil : @source
-	@source_line = @insn.line.to_s
+        super(insn, cfg)
+        @guard_value = val
+        bug() unless @guard_value.is_a?(Variable)
+        @values = [@guard_value]
+        @variables = []
+        @variables_without_result = []
+        @variables << @guard_value
+        @variables_without_result << @guard_value
+        @result_variable = nil
+        @dependent_variables = get_dependent_variables(vars)
+        @source = @insn.source
+        @source = @source.empty? ? nil : @source
+        @source_line = @insn.line.to_s
       end
 
       ### unboxing begin ###
       def unboxing_prelude()
-	# TODO inline api の返り値で unbox 可能なものは、class_exact にして伝播させること。
-	if @guard_value.class_exact? && @guard_value.can_unbox?
-	  @guard_value.can_unbox()
-	else
-	  @guard_value.can_not_unbox()
-	end
+        # TODO inline api の返り値で unbox 可能なものは、class_exact にして伝播させること。
+        if @guard_value.class_exact? && @guard_value.can_unbox?
+          @guard_value.can_unbox()
+        else
+          @guard_value.can_not_unbox()
+        end
       end
 
       def propergate_value_which_can_not_unbox(defs)
-	change = false
+        change = false
 
-	# forward
-	change |= defs.can_not_unbox_variable_resolve_forward(@guard_value)
+        # forward
+        change |= defs.can_not_unbox_variable_resolve_forward(@guard_value)
 
-	# backward
-	if @guard_value.can_not_unbox?
-	  change |= defs.can_not_unbox_variable_resolve_backward(@guard_value)
-	  if @configuration.deoptimize?
-	    @dependent_variables.each do |v|
-	      change |= v.can_not_unbox()
-	    end
-	  end
-	end
+        # backward
+        if @guard_value.can_not_unbox?
+          change |= defs.can_not_unbox_variable_resolve_backward(@guard_value)
+          if @configuration.deoptimize?
+            @dependent_variables.each do |v|
+              change |= v.can_not_unbox()
+            end
+          end
+        end
 
-	change
+        change
       end
 
       def propergate_box_value(defs)
-	change = false
+        change = false
 
-	# forward
-	change |= defs.box_value_resolve_forward(@guard_value)
+        # forward
+        change |= defs.box_value_resolve_forward(@guard_value)
 
-	# backward
-	if @guard_value.boxed?
-	  change |= defs.box_value_resolve_backward(@guard_value)
-	  if @configuration.deoptimize?
-	    @dependent_variables.each do |v|
-	      v.box()
-	      change |= defs.box_value_resolve_backward(v)
-	    end
-	  end
-	end
+        # backward
+        if @guard_value.boxed?
+          change |= defs.box_value_resolve_backward(@guard_value)
+          if @configuration.deoptimize?
+            @dependent_variables.each do |v|
+              v.box()
+              change |= defs.box_value_resolve_backward(v)
+            end
+          end
+        end
 
-	change
+        change
       end
 
       def propergate_unbox_value(defs)
-	return false if @guard_value.can_not_unbox?
-	bug() unless @guard_value.class_exact?
-	defs.unbox_value_resolve(@guard_value)
+        return false if @guard_value.can_not_unbox?
+        bug() unless @guard_value.class_exact?
+        defs.unbox_value_resolve(@guard_value)
       end
       ### unboxing end ###
 
       def propergate_exact_class(defs)
-	defs.exact_class_resolve(@guard_value)
+        defs.exact_class_resolve(@guard_value)
       end
 
       def to_c()
-	if @configuration.inject_guard? && !@guard_value.class_exact?
-	  bug() if @insn.pc == -1
-	  bug() unless @insn.depth
-	  GUARD_TEMPLATE.trigger(binding).chomp
-	end
+        if @configuration.inject_guard? && !@guard_value.class_exact?
+          bug() if @insn.pc == -1
+          bug() unless @insn.depth
+          GUARD_TEMPLATE.trigger(binding).chomp
+        end
       end
 
       def type_propergation(defs)
-	bug()
+        bug()
       end
 
       def mark(defs)
-	if !@alive
-	  @alive = true
-	  defs.mark(@guard_value)
-	  if @configuration.deoptimize?
-	    @dependent_variables.each{|v| defs.mark(v)}
-	  end
-	  true
-	else
-	  false
-	end
+        if !@alive
+          @alive = true
+          defs.mark(@guard_value)
+          if @configuration.deoptimize?
+            @dependent_variables.each{|v| defs.mark(v)}
+          end
+          true
+        else
+          false
+        end
       end
 
       private
       
       def simple?
-	bug() if @guard_value.dynamic?
-	bug() if @guard_value.class_exact?
-	special_consts = [NilClass, TrueClass, FalseClass, Symbol, Fixnum]
-	special_consts.size.times do |i|
-	  special_consts.combination(i + 1).each do |pattern|
-	    return true if @guard_value.is_just?(pattern)
-	  end
-	end
-	false
+        bug() if @guard_value.dynamic?
+        bug() if @guard_value.class_exact?
+        special_consts = [NilClass, TrueClass, FalseClass, Symbol, Fixnum]
+        special_consts.size.times do |i|
+          special_consts.combination(i + 1).each do |pattern|
+            return true if @guard_value.is_just?(pattern)
+          end
+        end
+        false
       end
 
       def guard_begin()
@@ -283,36 +338,40 @@ static int <CLASS_CHECK_FUNCTION_NAME>_failed(VALUE obj, VALUE klass)
       end
 
       def get_dependent_variables(vars)
-	targets = []
-	s = @insn.iseq
-	while s
-	  s.lvars.each do |var_name, var_id, var_annotation|
-	    if @translator.inline_block?
-	      targets << "local#{var_id}_#{var_name}" # FIXME
-	    else
-	      targets << "lvp[#{var_id}]" # FIXME
-	    end
-	  end
-	  s = s.parent
-	end
-	d = @insn.depth
-	while d > 0 do
-	  d -= 1
-	  targets << "tmp#{d}" # FIXME
-	end
-	vars.select{|v| targets.include?(v.to_name)}.uniq()
+        targets = []
+        s = @insn.iseq
+        level = @insn.iseq.generation
+        while s
+          s.lvars.each do |var_name, var_id, op_idx, depth, var_annotation|
+            bug() unless depth == level
+            if @translator.inline_block?
+              targets << "local#{var_id}_#{var_name}" # FIXME
+            else
+              targets << "dfp#{depth}[#{op_idx}]" # FIXME
+            end
+          end
+          level -= 1
+          s = s.parent
+        end
+        bug() unless level == -1
+        d = @insn.depth
+        while d > 0 do
+          d -= 1
+          targets << "tmp#{d}" # FIXME
+        end
+        vars.select{|v| targets.include?(v.to_name)}.uniq()
       end
     end
 
     class StandardGuard < GuardIR
       def to_debug_string()
-	"StandardGuard(#{@guard_value.to_debug_string()})"
+        "StandardGuard(#{@guard_value.to_debug_string()})"
       end
     end
 
     class JumpGuard < GuardIR
       def initialize(val, vars, insn, cfg)
-	super(val, vars, insn, cfg)
+        super(val, vars, insn, cfg)
         @bool = bool_value()
       end
 
@@ -321,18 +380,18 @@ static int <CLASS_CHECK_FUNCTION_NAME>_failed(VALUE obj, VALUE klass)
       end
 
       def reset()
-	super()
-	if @configuration.deoptimize?
-	  @dependent_variables.map! do |v|
-	    bug() unless v.is_a?(Variable)
-	    @cfg.find_variable(v)
-	  end
-	  bug() if @dependent_variables.include?(nil)
-	end
+        super()
+        if @configuration.deoptimize?
+          @dependent_variables.map! do |v|
+            bug() unless v.is_a?(Variable)
+            @cfg.find_variable(v)
+          end
+          bug() if @dependent_variables.include?(nil)
+        end
       end
 
       def to_debug_string()
-	"JumpGuard(#{@guard_value.to_debug_string()})"
+        "JumpGuard(#{@guard_value.to_debug_string()})"
       end
 
       def to_c()
@@ -359,5 +418,6 @@ static int <CLASS_CHECK_FUNCTION_NAME>_failed(VALUE obj, VALUE klass)
       end
     end
   end
+end
 end
 

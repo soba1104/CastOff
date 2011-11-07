@@ -7,7 +7,7 @@ require 'cast_off'
 this = File.expand_path(__FILE__)
 step = nil
 verbose = false
-initialize = false
+clear = false
 deoptimize = false
 threshold = 100
 name = nil
@@ -22,9 +22,6 @@ opt.separator("\n  Options:")
 opt.on('--verbose', <<-EOS.strip) {|v| verbose = true }
                                      Show compilation progress and internal information.
 EOS
-opt.on('--initialize', <<-EOS.strip) {|v| initialize = true }
-                                     Clear profile information and re-compile target program.
-EOS
 opt.on('--deoptimize', <<-EOS.strip) {|v| deoptimize = true }
                                      Enable deoptimization.
 EOS
@@ -33,8 +30,18 @@ opt.on('--threshold=COUNT', <<-EOS.strip, Integer) {|v| threshold = v }
                                      Default value is 100.
 EOS
 opt.on('--name=NAME', <<-EOS.strip, String) {|v| name = v }
-                                     Name compiled binary NAME.
-                                     This name is used for search of compiled binaries.
+                                     Name compiled methods NAME.
+                                     This name is used for search of compiled methods.
+                                     If you don't use this option, CastOff uses File.basename([programfile]) as name.
+EOS
+opt.on('--clear', <<-EOS.strip) {|v| clear = true }
+                                     Clear profile information and delete compiled methods.
+                                     If you want to clear profile information and compiled methods of target name "foo",
+                                     you should execute following command.
+                                     $CastOff --clear --name=foo
+EOS
+opt.on('--run', <<-EOS.strip) {|v| step = 'run' }
+                                     Execute [programfile] with compiled methods.
 EOS
 opt.on('--step-1', <<-EOS.strip) {|v| step = '1' }
                                      First step of compilation.
@@ -42,14 +49,7 @@ opt.on('--step-1', <<-EOS.strip) {|v| step = '1' }
 EOS
 opt.on('--step-2', <<-EOS.strip) {|v| step = '2' }
                                      Second step of compilation.
-                                     On this step, CastOff collects profile information.
-EOS
-opt.on('--step-3', <<-EOS.strip) {|v| step = '3' }
-                                     Last step of compilation.
-                                     On this step, CastOff compiles methods using profile information.
-EOS
-opt.on('--run', <<-EOS.strip) {|v| step = 'run' }
-                                     Execute [programfile] with compiled binaries.
+                                     On this step, CastOff collects profile information and compiles methods.
 EOS
 opt.on_tail('-h', "--help", "Show this help.") do
   puts opt
@@ -63,13 +63,32 @@ end
 opt.order!(ARGV)
 
 args = ARGV.join(" ")
-script = ARGV.shift
+script = ARGV.shift || ''
+name = File.basename(script) unless name
+
+if clear
+  if name.empty?
+    STDERR.puts(<<-EOS)
+Invalid arguments. You should pass target name to CastOff.
+If you want to clear profile information and compiled methods of target name "foo",
+you should execute following command.
+$CastOff --clear --name=foo
+    EOS
+    exit(1)
+  end
+  CastOff.program_name = name
+  CastOff.clear()
+  exit(0)
+end
 
 unless File.exist?(script)
-  STDERR.puts("#{script} is not exist")
+  if script.empty?
+    STDERR.puts("Invalid arguments. You should pass [programname] to CastOff.")
+  else
+    STDERR.puts("#{script} is not exist.")
+  end
   exit(1)
 end
-name = File.basename(script) unless name
 
 configuration = <<-EOS
 CastOff.program_name = #{name.inspect}
@@ -80,29 +99,30 @@ EOS
 eval(configuration, binding)
 CastOff.compilation_threshold = threshold
 CastOff.program_name = name
-CastOff::Util.set_verbose_mode(verbose)
+CastOff.verbose(verbose)
 
 case step
 when nil
   STDERR.puts("-------------------------------- compilation start, threshold = #{threshold}, name = #{name}: #{args} --------------------------------")
-  3.times{|i| system("#{this} --step-#{i + 1} #{initialize ? '--initialize' : ''} --threshold=#{threshold} --name=#{name} #{deoptimize ? '--deoptimize' : ''} #{verbose ? '--verbose' : ''} #{args}")}
+  2.times{|i| system("#{this} --step-#{i + 1} --threshold=#{threshold} --name=#{name} #{deoptimize ? '--deoptimize' : ''} #{verbose ? '--verbose' : ''} #{args}")}
 when '1'
   STDERR.puts("-------------------------------- step 1 --------------------------------")
   CastOff.development(true)
   CastOff.use_base_configuration(false)
-  CastOff.clear_base_configuration(initialize)
   CastOff.autocompile()
 when '2'
   STDERR.puts("-------------------------------- step 2 --------------------------------")
   CastOff.development(true)
   CastOff.use_base_configuration(false)
   CastOff.autoload()
-when '3'
-  STDERR.puts("-------------------------------- step 3 --------------------------------")
-  CastOff.update_base_configuration(true)
-  CastOff.use_profile_results(true)
-  CastOff.autoload()
-  msg = <<-EOS
+  #fin = Object.new
+  #ObjectSpace.define_finalizer(fin){
+  at_exit{
+    CastOff.development(false)
+    CastOff.use_base_configuration(true)
+    # step 3
+    CastOff.load(true)
+    msg = <<-EOS
 
 ----------------------------------------------------------------------------------------
 Compilation finished successfully.
@@ -112,9 +132,9 @@ require 'cast_off'
 #{configuration.chomp}
 CastOff.autoload()
 ----------------------------------------------------------------------------------------
-  EOS
-  at_exit{STDERR.puts(msg)}
-  #ObjectSpace.define_finalizer(configuration){STDERR.puts(msg)}
+    EOS
+    STDERR.puts(msg)
+  }
 when 'run'
   CastOff.autoload()
 else

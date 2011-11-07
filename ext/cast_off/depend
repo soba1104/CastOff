@@ -1,6 +1,6 @@
 $(srcdir)/generated_c_include/unbox_api.h:	\
   $(srcdir)/generated_c_include/unbox_api.h.rb
-	$(ruby) -- $(srcdir)/generated_c_include/unbox_api.h.rb > $@
+	$(RUBY) -- $(srcdir)/generated_c_include/unbox_api.h.rb > $@
 
 
 cast_off.c:					\
@@ -32,7 +32,7 @@ cast_off.c:					\
   $(srcdir)/extconf.h				\
   $(srcdir)/cast_off.h				\
   $(srcdir)/cast_off.c.rb
-	$(ruby) -- $(srcdir)/cast_off.c.rb $(srcdir)/ruby_source $(srcdir)/generated_c_include > $@
+	$(RUBY) -- $(srcdir)/cast_off.c.rb $(srcdir)/ruby_source $(srcdir)/generated_c_include > $@
 
 
 cast_off.o:					\

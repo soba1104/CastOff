@@ -5,234 +5,253 @@ module CastOff
     class Iseq
       include CastOff::Util
 
-      attr_reader :iseq, :children, :parent, :depth, :lvars, :source, :name, :iseq_depth, :itype, :args, :source_file, :source_line
+      attr_reader :iseq, :children, :parent, :depth, :lvars, :source, :name, :generation, :itype, :args, :source_file, :source_line, :parent_pc, :loopkey
 
       class Args
-	include CastOff::Util
+        include CastOff::Util
 
-	attr_reader :arg_size, :argc, :post_len, :post_start, :rest_index, :block_index, :opts, :opt_len
+        attr_reader :arg_size, :argc, :post_len, :post_start, :rest_index, :block_index, :opts, :opt_len
 
-	def initialize(args, iseq)
-	  @iseq = iseq
-	  case args
-	  when Integer
-	    @argc, @opts, @post_len, @post_start, @rest_index, @block_index, @simple = args, [], 0, 0, -1, -1, 1
-	  when Array
-	    bug() unless args.size == 7
-	    @argc, @opts, @post_len, @post_start, @rest_index, @block_index, @simple = args
-	  else
-	    bug()
-	  end
-	  @opt_len = @opts.empty? ? 0 : (@opts.size() - 1)
-	  @arg_size = @argc + @opt_len + @post_len + (@rest_index == -1 ? 0 : 1) + (@block_index == -1 ? 0 : 1)
+        def initialize(args, iseq)
+          @iseq = iseq
+          case args
+          when Integer
+            @argc, @opts, @post_len, @post_start, @rest_index, @block_index, @simple = args, [], 0, 0, -1, -1, 1
+          when Array
+            bug() unless args.size == 7
+            @argc, @opts, @post_len, @post_start, @rest_index, @block_index, @simple = args
+          else
+            bug()
+          end
+          @opt_len = @opts.empty? ? 0 : (@opts.size() - 1)
+          @arg_size = @argc + @opt_len + @post_len + (@rest_index == -1 ? 0 : 1) + (@block_index == -1 ? 0 : 1)
 
-	  case @iseq.itype
-	  when :method
-	    bug() if @simple == 2
-	  when :block
-	    # nothing to do
-	  else
-	    bug()
-	  end
+          case @iseq.itype
+          when :method
+            bug() if @simple == 2
+          when :block
+            # nothing to do
+          else
+            bug()
+          end
 
-	  if @rest_index != -1
-	    bug() unless @rest_index + 1 == @post_start
-	    bug() unless @argc + @opt_len == @rest_index
-	  end
-	end
+          if @rest_index != -1
+            bug() unless @rest_index + 1 == @post_start
+            bug() unless @argc + @opt_len == @rest_index
+          end
+        end
 
-	def post?
-	  @post_len != 0
-	end
+        def post?
+          @post_len != 0
+        end
 
-	def rest?
-	  @rest_index != -1
-	end
+        def rest?
+          @rest_index != -1
+        end
 
-	def block?
-	  @block_index != -1
-	end
+        def block?
+          @block_index != -1
+        end
 
-	def opt?
-	  not @opts.empty?
-	end
+        def opt?
+          not @opts.empty?
+        end
 
-	def simple?
-	  (@simple & 0x01) != 0
-	end
+        def simple?
+          (@simple & 0x01) != 0
+        end
 
-	def splat?
-	  (@simple & 0x02 == 0) && (@argc + @post_len > 0)
-	end
+        def splat?
+          (@simple & 0x02 == 0) && (@argc + @post_len > 0)
+        end
       end
 
-      def initialize(iseq, parent, depth)
-	bug() unless iseq.is_a?(RubyVM::InstructionSequence)
-	@iseq = iseq
-	ary = iseq.to_a
-	@name = ary[5]
-	@source_file = ary[7]
-	@source_line = ary[8]
-	@itype = ary[9] # iseq type
-	args = ary[11]
-	@args = Args.new(args, self)
-	if @source_file && File.exist?(@source_file)
-	  @source = File.readlines(@source_file)
-	else
-	  @source = nil
-	end
-	@parent = parent
-	@children = {} # pc => iseq
-	bug() unless depth.is_a?(Fixnum)
-	@depth = depth
-	@iseq_depth = 0
+      def initialize(iseq, parent, depth, ppc)
+        bug() unless iseq.is_a?(RubyVM::InstructionSequence)
+        @iseq = iseq
+        ary = iseq.to_a
+        @name = ary[5]
+        @source_file = ary[7]
+        @source_line = ary[8]
+        @itype = ary[9] # iseq type
+        args = ary[11]
+        @args = Args.new(args, self)
+        if @source_file && File.exist?(@source_file)
+          @source = File.readlines(@source_file)
+        else
+          @source = nil
+        end
+        @parent = parent
+        @children = {} # pc => iseq
+        bug() unless depth.is_a?(Fixnum)
+        @depth = depth
+        @parent_pc = ppc
+        @generation = 0
 
-	p = @parent
-	while p
-	  p = p.parent
-	  @iseq_depth += 1
-	end
-	bug() if !root? && @iseq_depth < 1
+        p = @parent
+        while p
+          p = p.parent
+          @generation += 1
+        end
+        bug() if !root? && @generation < 1
 
-	# for code generator
-	@argv_size = 1
-	@initialize_for_guards = []
-	@guard_codes = {}
-	@local_variable_declarations = []
-	@c_function_body = ""
-	@c_name = "iseq_#{@iseq.hash.to_s.gsub(/-/, "_")}"
-	@ifunc_name = "ifunc_#{@c_name}"
-	@ifunc_node_name = "ifunc_node_#{@c_name}"
+        # for code generator
+        @argv_size = 1
+        @initialize_for_guards = []
+        @guard_codes = {}
+        @local_variable_declarations = []
+        @c_function_body = ""
+        @c_name = "iseq_#{@iseq.hash.to_s.gsub(/-/, "_")}"
+        @ifunc_name = "ifunc_#{@c_name}"
+        @ifunc_node_name = "ifunc_node_#{@c_name}"
         @excs = {}
-	@reference_constant_p = false
+        @reference_constant_p = false
+        @loopkey = nil
       end
 
       def set_local_variables(lvars)
-	@lvars = lvars
+        @lvars = lvars
+      end
+
+      def set_loopkey(k)
+        bug() if root?
+        @loopkey = k
       end
 
       def add(child, pc)
-	bug() unless child.is_a?(Iseq)
-	bug() unless pc.is_a?(Fixnum)
-	bug() if @children[pc]
-	@children[pc] = child
+        bug() unless child.is_a?(Iseq)
+        bug() unless pc.is_a?(Fixnum)
+        bug() if @children[pc]
+        @children[pc] = child
       end
 
       def root?
-	!@parent
+        !@parent
+      end
+
+      def ancestors
+        a = []
+        s = self.parent
+        while s
+          a << s
+          s = s.parent
+        end
+        a
       end
 
       def reference_constant
-	@reference_constant_p = true
+        @reference_constant_p = true
       end
 
       def reference_constant?
-	@reference_constant_p
+        @reference_constant_p
       end
 
       def append_c_function_body(code)
-	@c_function_body = [@c_function_body, code].join("\n")
+        @c_function_body = [@c_function_body, code].join("\n")
       end
 
       def all_c_function_body()
-	o = own_c_function_body()
-	c = @children.values.map{|i| i.all_c_function_body() }.join("\n")
-	[o, c].join("\n")
+        o = own_c_function_body()
+        c = @children.values.map{|i| i.all_c_function_body() }.join("\n")
+        [o, c].join("\n")
       end
 
       def own_c_function_body()
-	@c_function_body
+        @c_function_body
       end
 
       def use_temporary_c_ary(size)
-	@argv_size = size if size > @argv_size
+        @argv_size = size if size > @argv_size
       "cast_off_argv"
       end
 
       def all_argv_size()
-	o = own_argv_size()
-	c = @children.values.map{|i| i.all_argv_size()}
-	[o, c].flatten.max()
+        o = own_argv_size()
+        c = @children.values.map{|i| i.all_argv_size()}
+        [o, c].flatten.max()
       end
 
       def own_argv_size()
-	@argv_size
+        @argv_size
       end
 
       def declare_local_variable(v)
-	@local_variable_declarations << v
+        @local_variable_declarations << v
       end
 
       def all_local_variable_declarations()
-	o = own_local_variable_declarations()
-	c = @children.values.map{|i| i.all_local_variable_declarations() }
-	[o, c].flatten.uniq()
+        o = own_local_variable_declarations()
+        c = @children.values.map{|i| i.all_local_variable_declarations() }
+        [o, c].flatten.uniq()
       end
 
       def own_local_variable_declarations()
-	@local_variable_declarations.uniq()
+        @local_variable_declarations.uniq()
       end
 
       def initialize_for_guards(var)
-	@initialize_for_guards << var
+        @initialize_for_guards << var
       end
 
       def all_initializations_for_guards()
-	# 外のブロックで定義されたローカル変数は、LocalVariable とはならないため。
-	# ローカル変数は、全て初期化してしまって問題ない。
-	ret = []
-	ret += own_initializations_for_guards()
-	@children.values.each{|c| ret += c.all_initializations_for_guards() }
-	ret.uniq()
+        # 外のブロックで定義されたローカル変数は、LocalVariable とはならないため。
+        # ローカル変数は、全て初期化してしまって問題ない。
+        ret = []
+        ret += own_initializations_for_guards()
+        @children.values.each{|c| ret += c.all_initializations_for_guards() }
+        ret.uniq()
       end
 
       def own_initializations_for_guards()
-	@initialize_for_guards.map{|v| "  #{v} = Qnil;"}.uniq()
+        @initialize_for_guards.map{|v| "  #{v} = Qnil;"}.uniq()
       end
 
       def inject_guard(insn, code)
-	bug() unless insn.iseq == self
-	if @guard_codes[code]
-	  @guard_codes[code] << insn
-	else
-	  @guard_codes[code] = [insn]
-	end
+        bug() unless insn.iseq == self
+        if @guard_codes[code]
+          @guard_codes[code] << insn
+        else
+          @guard_codes[code] = [insn]
+        end
       end
 
       def iterate_all_guards(&b)
-	iterate_own_guards(&b)
-	@children.values.each{|c| c.iterate_all_guards(&b)}
+        iterate_own_guards(&b)
+        @children.values.each{|c| c.iterate_all_guards(&b)}
       end
 
       def iterate_own_guards()
-	@guard_codes.each{|(code, insns)| yield(code, insns)}
+        @guard_codes.each{|(code, insns)| yield(code, insns)}
       end
       
       def iterate_all_iseq(&b)
-	yield(self)
-	@children.values.each{|c| c.iterate_all_iseq(&b)}
+        yield(self)
+        @children.values.each{|c| c.iterate_all_iseq(&b)}
       end
 
       def declare_ifunc_node()
-	"static NODE *#{@ifunc_node_name}"
+        "static NODE *#{@ifunc_node_name}"
       end
 
       IfuncNodeGeneratorTemplate = ERB.new(<<-EOS, 0, '%-', 'io')
-static VALUE <%= ifunc_node_generator() %>()
+static void <%= ifunc_node_generator() %>()
 {
-  /* NEW_IFUNC の第二引数は Proc に対して渡せる好きな値 */
-  <%= @ifunc_node_name %> = NEW_IFUNC(<%= @ifunc_name %>, <%= self %>->self); 
-  <%= @ifunc_node_name %>->nd_aid = 0; /* rb_frame_this_func で <ifunc> となる。TODO */
+%# NEW_IFUNC の第二引数は Proc に対して渡せる好きな値
+%#<%= @ifunc_node_name %> = NEW_IFUNC(<%= @ifunc_name %>, <%= self %>->self); 
+  <%= @ifunc_node_name %> = NEW_IFUNC(<%= @ifunc_name %>, Qnil); 
+%# nd_aid = 0 だと rb_frame_this_func で <ifunc> となる。
+  <%= @ifunc_node_name %>->nd_aid = 0;
   rb_gc_register_mark_object((VALUE)<%= @ifunc_node_name %>);
 }
       EOS
 
       def define_ifunc_node_generator()
-	IfuncNodeGeneratorTemplate.trigger(binding)
+        IfuncNodeGeneratorTemplate.trigger(binding)
       end
 
       def ifunc_node_generator()
-	"generate_ifunc_node_#{@c_name}"
+        "generate_ifunc_node_#{@c_name}"
       end
 
       BlockGeneratorTemplate = ERB.new(<<-EOS, 0, '%-', 'io')
@@ -257,11 +276,21 @@ static VALUE <%= ifunc_node_generator() %>()
       end
 
       def define_block_generator()
-	BlockGeneratorTemplate.trigger(binding)
+        BlockGeneratorTemplate.trigger(binding)
       end
 
       def block_generator()
-	"cast_off_create_block_#{@c_name}"
+        "cast_off_create_block_#{@c_name}"
+      end
+
+      def declare_dfp(indent = 2)
+        indent = ' ' * indent
+        (0..@generation).map{|i| "#{indent}VALUE *dfp#{i};"}.join("\n")
+      end
+
+      def update_dfp(indent = 2)
+        indent = ' ' * indent
+        (0..@generation).map{|i| "#{indent}dfp#{i} = fetch_dfp(th, #{@generation - i});"}.join("\n")
       end
 
       IfuncTemplate = ERB.new(<<-'EOS', 0, '%-', 'io')
@@ -272,11 +301,15 @@ static VALUE <%= ifunc_node_generator() %>()
   VALUE cast_off_argv[<%= own_argv_size() %>];
   VALUE cast_off_tmp;
   VALUE self = get_self(th);
-  VALUE *lvp = lvar_ptr(th, <%= @iseq_depth %>);
   int lambda_p = cast_off_lambda_p(arg, argc, argv);
   int i, num;
-
+<%= declare_dfp %>
 <%= (own_local_variable_declarations).map{|v| "  #{v};"}.join("\n") %>
+
+% bug() if root?
+  expand_dframe(th, <%= @lvars.size %>, <%= self %>, 0);
+<%= update_dfp %>
+
 %inits = own_initializations_for_guards
 %bug() if inits.uniq!
 %inits.join("\n")
@@ -321,11 +354,11 @@ static VALUE <%= ifunc_node_generator() %>()
       EOS
 
       def declare_ifunc()
-	"static VALUE #{@ifunc_name}(VALUE arg, VALUE dummy, int argc, VALUE *argv, VALUE blockarg)"
+        "static VALUE #{@ifunc_name}(VALUE arg, VALUE dummy, int argc, VALUE *argv, VALUE blockarg)"
       end
 
       def define_ifunc()
-	IfuncTemplate.trigger(binding)
+        IfuncTemplate.trigger(binding)
       end
 
       ExceptionHandlerTemplate = ERB.new(<<-'EOS', 0, '%-', 'io')
@@ -352,10 +385,10 @@ static VALUE <%= ifunc_node_generator() %>()
       case TAG_BREAK:
         excval = catch_break(th);
         if (excval != Qundef) {
-          switch((int)cfp->pc) {
-%    entries.each do |(key, label, stack)|
-          case <%= key %>:
-	    lvp = lvar_ptr(th, <%= @iseq_depth %>);
+          switch((int)(cfp->pc - cfp->iseq->iseq_encoded)) {
+%    entries.each do |(pc, label, stack)|
+          case <%= pc %>:
+<%= update_dfp(12) %>
             tmp<%= stack - 1 %> = excval; /* FIXME */
             goto <%= label %>;
 %    end
@@ -368,7 +401,7 @@ static VALUE <%= ifunc_node_generator() %>()
         excval = catch_return(th);
         if (excval != Qundef) {
           /* vm_pop_frame is called at the vm_call_method() */
-	  TH_POP_TAG2();
+          TH_POP_TAG2();
           return excval;
         }
 %  else
@@ -402,18 +435,18 @@ static VALUE <%= ifunc_node_generator() %>()
         not @excs.empty?
       end
 
-      def catch_exception(exc, key, label, stack)
+      def catch_exception(exc, pc, label, stack)
         @excs[exc] ||= []
-	entry = [key, label, stack]
+        entry = [pc, label, stack]
         @excs[exc] << entry unless @excs[exc].include?(entry)
       end
 
       def to_name
-	"#{@name}: #{@source_file} #{@source_line}"
+        "#{@name}: #{@source_file} #{@source_line}"
       end
 
       def to_s
-	@c_name
+        @c_name
       end
     end
   end

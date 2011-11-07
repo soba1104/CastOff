@@ -3,33 +3,33 @@ module CastOff::Compiler
     class BasicBlock
 
       def in_depth=(depth)
-	@in_depth = depth
+        @in_depth = depth
       end
 
       def in_depth()
-	bug() unless @in_depth
-	@in_depth
+        bug() unless @in_depth
+        @in_depth
       end
 
       def out_depth()
-	bug() unless @in_depth
-	@in_depth + stackincrease()
+        bug() unless @in_depth
+        @in_depth + stackincrease()
       end
 
       def find_insn_stack_depth(insn)
-	bug() unless @insns.include?(insn)
-	depth = in_depth()
-	@insns.each do |i|
-	  return depth if i == insn
-	  depth += i.stack_usage()
-	end
-	bug()
+        bug() unless @insns.include?(insn)
+        depth = in_depth()
+        @insns.each do |i|
+          return depth if i == insn
+          depth += i.stack_usage()
+        end
+        bug()
       end
 
       private
 
       def stackincrease()
-	@insns.inject(0){|inc, i| inc + i.stack_usage()}
+        @insns.inject(0){|inc, i| inc + i.stack_usage()}
       end
     end
 
@@ -47,16 +47,16 @@ module CastOff::Compiler
       vertex = nil
       queue = [@blocks[0]]
       while achieved.size() != @blocks.size()
-	vertex = queue.shift()
-	bug() unless vertex
-	achieved[vertex] = true
-	depth = vertex.out_depth
-	vertex.next.each do |b|
-	  if !queue.include?(b) && !achieved[b]
-	    b.in_depth = depth
-	    queue << b
-	  end
-	end
+        vertex = queue.shift()
+        bug() unless vertex
+        achieved[vertex] = true
+        depth = vertex.out_depth
+        vertex.next.each do |b|
+          if !queue.include?(b) && !achieved[b]
+            b.in_depth = depth
+            queue << b
+          end
+        end
       end
       @blocks.each{|b0| bug() if b0.next.find{|b1| b0.out_depth != b1.in_depth}}
     end

@@ -25,10 +25,19 @@ module CastOff
  
 #include "vm_insnhelper.h"
 #include "vm_insnhelper.c"
+#define USE_INSN_STACK_INCREASE 1
+#include "insns_info.inc"
 
 #include "manual_update.h"
 
-extern VALUE rb_eCastOffExecutionError;
+static VALUE rb_mCastOff;
+static VALUE rb_eCastOffExecutionError;
+static VALUE rb_mCastOffCompiler;
+static VALUE rb_cCastOffSingletonClass;
+static VALUE rb_cCastOffConfiguration;
+static VALUE rb_cCastOffClassWrapper;
+static VALUE rb_cCastOffMethodWrapper;
+
 #include "vm_api.h"
 #include "iter_api.h"
 #include "unbox_api.h"
@@ -39,12 +48,6 @@ extern VALUE rb_eCastOffExecutionError;
 #define ARRAY_CONSERVATIVE   1
 %end
 #include "inline_api.h"
-void cast_off_return_from_execute(rb_num_t raw_state, VALUE val);
-VALUE cast_off_return(rb_num_t raw_state, VALUE throwobj, int lambda_p);
-void cast_off_break(rb_num_t raw_state, VALUE epc, VALUE throwobj, int blk_key);
-VALUE catch_break(rb_thread_t *th);
-VALUE catch_return(rb_thread_t *th);
-VALUE cast_off_handle_blockarg(VALUE blockarg);
 
 /* FIXME */
 #undef RUBY_VM_CHECK_INTS
@@ -57,16 +60,19 @@ VALUE cast_off_handle_blockarg(VALUE blockarg);
 static VALUE sampling_table_val = Qnil;
 static st_table *sampling_table = NULL;
 
-static VALUE cast_off_register_sampling_table_<%= sign %>(VALUE dummy, VALUE hash)
+static void register_sampling_table(VALUE hash)
 {
   sampling_table_val = hash;
   rb_gc_register_mark_object(hash);
   sampling_table = RHASH_TBL(hash);
+}
 
+static VALUE cast_off_register_sampling_table_<%= signiture() %>(VALUE dummy, VALUE hash)
+{
+  register_sampling_table(hash);
   return Qnil;
 }
 
-extern VALUE rb_cCastOffSingletonClass;
 static void sampling_variable(VALUE val, VALUE sym)
 {
   /* :variable => [klass0, klass1, ...] */
@@ -91,10 +97,8 @@ static void sampling_variable(VALUE val, VALUE sym)
   return;
 }
 
-static void sampling_poscall(VALUE val, VALUE recv, VALUE method_id)
+static void __sampling_poscall(VALUE val, VALUE method_klass, VALUE method_id)
 {
-  /* method_klass => {:method_id => klass} */
-  VALUE method_klass = rb_class_of(recv);
   VALUE klass;
   VALUE method_id_hashval, hashval;
   st_table *method_id_hash, *hash;
@@ -127,6 +131,11 @@ static void sampling_poscall(VALUE val, VALUE recv, VALUE method_id)
   return;
 }
 
+static void sampling_poscall(VALUE val, VALUE recv, VALUE method_id)
+{
+  __sampling_poscall(val, rb_class_of(recv), method_id);
+}
+
 %@namespace.each_static_decls do |decl|
 <%= decl %>
 %end
@@ -152,7 +161,7 @@ static VALUE <%= function_pointer_wrapper_func(fp) %>(VALUE recv, ID id, int arg
 
 static VALUE <%= function_pointer_wrapper_func_complex(fp) %>(VALUE recv, ID id, int argc<%= args_d %>)
 {
-  VALUE argv[<%= argc %>];
+  VALUE argv[<%= [argc, 1].max %>];
 
 %      argc.times do |i|
   argv[<%= i %>] = arg<%= i %>;
@@ -204,38 +213,13 @@ static rb_iseq_t *<%= child %> = NULL;
 %end
 
 static rb_iseq_t *cast_off_orig_iseq = NULL;
-%if !inline_block?
-static rb_iseq_t *cast_off_clone_iseq = NULL;
-%end
-static VALUE cast_off_register_iseq_<%= sign %>(VALUE dummy, VALUE iseqval)
+static VALUE cast_off_register_iseq_<%= signiture() %>(VALUE dummy, VALUE iseqval)
 {
   rb_iseq_t *iseq = DATA_PTR(iseqval);
   VALUE insn;
 
   rb_gc_register_mark_object(iseqval);
   cast_off_orig_iseq = iseq;
-
-%if !inline_block?
-  /* clone iseq to expand local size */
-  {
-    struct RTypedData *data = (struct RTypedData *)iseqval;
-    VALUE clone = TypedData_Make_Struct(rb_cISeq, rb_iseq_t, data->type, cast_off_clone_iseq);
-    if (cast_off_clone_iseq != DATA_PTR(clone)) {
-      rb_bug("cast_off_register_iseq: should not be reached");
-    }
-    *cast_off_clone_iseq = *cast_off_orig_iseq;
-    cast_off_clone_iseq->self = clone;
-    if (!cast_off_clone_iseq->orig) {
-      cast_off_clone_iseq->orig = iseqval;
-    }
-    if (cast_off_orig_iseq->local_iseq == cast_off_orig_iseq) {
-      cast_off_clone_iseq->local_iseq = cast_off_clone_iseq;
-    }
-
-    rb_gc_register_mark_object(clone);
-    cast_off_clone_iseq->local_size = <%= @lvars.size() %> + 1;
-  }
-%end
 
 %queue = [@root_iseq]
   <%= @root_iseq %> = cast_off_orig_iseq;
@@ -261,7 +245,7 @@ static VALUE cast_off_register_iseq_<%= sign %>(VALUE dummy, VALUE iseqval)
 static VALUE <%= key %> = Qundef;
 %end
 
-static VALUE cast_off_prefetch_constants_<%= sign %>(VALUE self, VALUE binding)
+static VALUE cast_off_prefetch_constants_<%= signiture() %>(VALUE self, VALUE binding)
 {
 %@prefetch_constants.each do |(key, value)|
 %  path, singleton_p = value
@@ -276,7 +260,7 @@ static VALUE cast_off_prefetch_constants_<%= sign %>(VALUE self, VALUE binding)
 
 static void *fbind = NULL;
 static void *feval = NULL;
-static VALUE cast_off_initialize_fptr_<%= sign %>(VALUE dummy)
+static VALUE cast_off_initialize_fptr_<%= signiture() %>(VALUE dummy)
 {
   rb_method_entry_t *me;
   VALUE klass;
@@ -393,31 +377,31 @@ static inline int empty_method_table_p(VALUE klass)
 %end
 
 %if !inline_block?
-static VALUE* init_lvar_ptr(rb_thread_t *th, long lvar_size)
+static inline void expand_dframe(rb_thread_t *th, long size, rb_iseq_t *iseq, int root_p)
 {
   rb_control_frame_t *cfp = th->cfp;
-  VALUE *lvp = cfp->sp;
   VALUE *sp = cfp->sp;
-  VALUE *lfp = cfp->lfp;
-  rb_block_t *blockptr = (rb_block_t *)(&(cfp)->self);
+  VALUE *dfp = cfp->dfp;
   int i;
 
-  if ((void *)(sp + lvar_size) >= (void *)cfp) {
+  if ((void *)(sp + size + 2) >= (void *)cfp) {
     rb_exc_raise(sysstack_error);
   }
 
-  for (i = 0; i < lvar_size; i++) {
+  for (i = 0; i < size; i++) {
     *sp++ = Qnil;
   }
+  *sp++ = dfp[-1]; /* cref */
+  *sp   = dfp[0];  /* specval */
 
-  *sp++ = lfp[-1]; /* svar */
-  *sp   = lfp[0];  /* specval */
-  cfp->lfp = sp;
+  if (root_p) {
+    cfp->lfp = sp;
+  }
+
   cfp->dfp = sp;
   cfp->sp  = sp + 1;
-  cfp->iseq = cast_off_clone_iseq;
-
-  return lvp;
+  cfp->bp  = sp + 1;
+  cfp->iseq = iseq;
 }
 
 static rb_thread_t *current_thread()
@@ -433,11 +417,8 @@ static VALUE get_self(rb_thread_t *th)
   return th->cfp->self;
 }
 
-static inline VALUE* lvar_ptr(rb_thread_t *th, int level)
+static inline VALUE* fetch_dfp(rb_thread_t *th, int level)
 {
-  VALUE *lfp;
-  long lvar_size = <%= @lvars.size() %>;
-#if 0
   VALUE *dfp;
   int i;
 
@@ -445,11 +426,7 @@ static inline VALUE* lvar_ptr(rb_thread_t *th, int level)
   for (i = 0; i < level; i++) {
     dfp = GET_PREV_DFP(dfp);
   }
-  lfp = dfp;
-#else
-  lfp = th->cfp->lfp;
-#endif
-  return lfp - 1 - lvar_size; /* lfp[0] = specval, lvp[-1] = svar, lvp[-2, ...] = lvars] */
+  return dfp;
 }
 
 static inline int cast_off_lambda_p(VALUE arg, int argc, VALUE *argv)
@@ -526,7 +503,7 @@ static void cast_off_set_block(rb_block_t *block)
 %  end
 %end
 
-static VALUE cast_off_register_ifunc_<%= sign %>(VALUE dummy)
+static VALUE cast_off_register_ifunc_<%= signiture() %>(VALUE dummy)
 {
 %if !inline_block?
 %  @root_iseq.iterate_all_iseq do |iseq|
@@ -558,8 +535,12 @@ static VALUE <%= this_function_name() %>(VALUE dummy, VALUE self)
   VALUE cast_off_argv[<%= @root_iseq.all_argv_size() %>];
   VALUE cast_off_tmp;
   rb_thread_t *th;
-%if !inline_block?
-  VALUE *lvp;
+%if inline_block?
+  VALUE thval;
+  VALUE specval;
+  VALUE *lfp, *dfp;
+%else
+<%= @root_iseq.declare_dfp %>
 %end
 %if use_fast_ivar?
   static VALUE __klass = Qundef;
@@ -583,7 +564,8 @@ static VALUE <%= this_function_name() %>(VALUE dummy, VALUE self)
 
 %if !inline_block?
   th = current_thread();
-  lvp = init_lvar_ptr(th, <%= @lvars.size() %>);
+  expand_dframe(th, <%= @root_iseq.lvars.size %>, <%= @root_iseq %>, 1);
+<%= @root_iseq.update_dfp() %>
 %end
 
 %if inline_block?
@@ -641,26 +623,25 @@ static VALUE <%= this_function_name() %>(VALUE dummy, VALUE self)
 <%= @root_iseq.enclose_end %>
 }
 
-extern VALUE rb_mCastOffCompiler;
-
 %['', '_singleton'].each do |str|
-static VALUE cast_off_register<%= str %>_method_<%= sign %>(VALUE dummy, VALUE self)
+static VALUE cast_off_register<%= str %>_method_<%= signiture() %>(VALUE dummy, VALUE self)
 {
 %  if @complex_call
   rb_define<%= str %>_method(self, "<%= @mid %>", <%= this_function_name() %>, -1);
 %  else
   rb_define<%= str %>_method(self, "<%= @mid %>", <%= this_function_name() %>, <%= @arg_size %>);
 %  end
+  return Qnil;
 }
 %end
 
-static VALUE cast_off_generate_proc_<%= sign %>(VALUE self, VALUE source_procval)
+static VALUE cast_off_generate_proc_<%= signiture() %>(VALUE self, VALUE source_procval)
 {
   rb_proc_t *source_procptr = DATA_PTR(source_procval);
   return rb_proc_new(<%= this_function_name() %>, source_procptr->block.self);
 }
 
-void Init_<%= sign %>(void)
+void Init_<%= signiture() %>(void)
 {
 %@namespace.each_nonstatic_decls do |decl|
   <%= decl %>
@@ -700,42 +681,52 @@ void Init_<%= sign %>(void)
   MEMZERO(&<%= v %>, struct iseq_inline_cache_entry, 1);
 %end
 
+  rb_mCastOff = rb_const_get(rb_cObject, rb_intern("CastOff"));
+  rb_eCastOffExecutionError = rb_const_get(rb_mCastOff, rb_intern("ExecutionError"));
+  rb_mCastOffCompiler = rb_const_get(rb_mCastOff, rb_intern("Compiler"));
+  rb_cCastOffSingletonClass = rb_const_get(rb_mCastOffCompiler, rb_intern("SingletonClass"));
+  rb_cCastOffConfiguration = rb_const_get(rb_mCastOffCompiler, rb_intern("Configuration"));
+  rb_cCastOffClassWrapper = rb_const_get(rb_mCastOffCompiler, rb_intern("ClassWrapper"));
+  rb_cCastOffMethodWrapper = rb_const_get(rb_mCastOffCompiler, rb_intern("MethodWrapper"));
+
 %if !@mid
-  rb_define_method(rb_mCastOffCompiler, "<%= sign %>", <%= this_function_name() %>, 1);
+  rb_define_method(rb_mCastOffCompiler, "<%= signiture() %>", <%= this_function_name() %>, 1);
 %end
 %  ['', '_singleton'].each do |str|
-  rb_define_method(rb_mCastOffCompiler, "register<%= str %>_method_<%= sign %>", cast_off_register<%= str %>_method_<%= sign %>, 1);
+  rb_define_method(rb_mCastOffCompiler, "register<%= str %>_method_<%= signiture() %>", cast_off_register<%= str %>_method_<%= signiture() %>, 1);
 %  end
-  rb_define_method(rb_mCastOffCompiler, "register_iseq_<%= sign %>",   cast_off_register_iseq_<%= sign %>, 1);
-  rb_define_method(rb_mCastOffCompiler, "register_ifunc_<%= sign %>",   cast_off_register_ifunc_<%= sign %>, 0);
-  rb_define_method(rb_mCastOffCompiler, "register_sampling_table_<%= sign %>",   cast_off_register_sampling_table_<%= sign %>, 1);
-  rb_define_method(rb_mCastOffCompiler, "initialize_fptr_<%= sign %>", cast_off_initialize_fptr_<%= sign %>, 0);
-  rb_define_method(rb_mCastOffCompiler, "prefetch_constants_<%= sign %>", cast_off_prefetch_constants_<%= sign %>, 1);
+  rb_define_method(rb_mCastOffCompiler, "register_iseq_<%= signiture() %>",   cast_off_register_iseq_<%= signiture() %>, 1);
+  rb_define_method(rb_mCastOffCompiler, "register_ifunc_<%= signiture() %>",   cast_off_register_ifunc_<%= signiture() %>, 0);
+  rb_define_method(rb_mCastOffCompiler, "register_sampling_table_<%= signiture() %>",   cast_off_register_sampling_table_<%= signiture() %>, 1);
+  rb_define_method(rb_mCastOffCompiler, "initialize_fptr_<%= signiture() %>", cast_off_initialize_fptr_<%= signiture() %>, 0);
+  rb_define_method(rb_mCastOffCompiler, "prefetch_constants_<%= signiture() %>", cast_off_prefetch_constants_<%= signiture() %>, 1);
 }
     end
 
     attr_reader :reciever_class, :loopkey, :mid, :configuration, :dependency, :root_iseq
 
-    def initialize(root, config, mid, is_proc, block_inlining, suggestion, dependency)
+    def initialize(root, config, mid, is_proc, block_inlining, suggestion, dependency, manager)
       ary = root.to_a
       @configuration = config
       @suggestion = suggestion
       @dependency = dependency
+      @manager = manager
       @block_inlining = block_inlining
       format_check(ary)
-      @root_iseq = Iseq.new(root, nil, 0)
+      @root_iseq = Iseq.new(root, nil, 0, nil)
       @mid = mid
       if execute?
-	# CastOff.execute
-	bug() unless @root_iseq.itype == :block
-	bug() if @mid
+        # CastOff.execute
+        bug() unless @root_iseq.itype == :block
+        bug() if @mid
       else
-	# CastOff.compile, CastOff.compile_singleton_method
-	bug() unless @root_iseq.itype == :method
-	bug() unless @mid
+        # CastOff.compile, CastOff.compile_singleton_method
+        bug() unless @root_iseq.itype == :method
+        bug() unless @mid
       end
       @arg_size = @root_iseq.args.arg_size
       raise(UnsupportedError.new("Currently, CastOff.execute cannot handle arguments")) if execute? && @arg_size > 0
+      raise(UnsupportedError.new("Currently, CastOff.execute does not support deoptimization")) if execute? && @configuration.deoptimize?
       bug() if is_proc
       @reciever_class = @configuration.class_of_variable(:self)
       @lvars, @ivars, args, body = prepare(ary, @configuration)
@@ -747,12 +738,15 @@ void Init_<%= sign %>(void)
       @cfg.gen_ir(self)
     end
 
+    def signiture()
+      @manager.signiture
+    end
+
     def target_name()
       @root_iseq.to_name()
     end
 
-    def to_c(sign)
-      @sign = sign
+    def to_c()
       @cfg.to_c()
       arguments = @lvars.slice(0, @arg_size).map{|l| "VALUE local#{l[1]}_#{l[0]}"} # FIXME
       Template.trigger(binding)
@@ -776,21 +770,21 @@ void Init_<%= sign %>(void)
     end
 
     def this_function_name()
-      bug() unless @sign
-      "cast_off_#{@sign}"
+      bug() unless signiture()
+      "cast_off_#{signiture()}"
     end
 
     def re_compilation()
       if @configuration.force_inline_block?
-	raise(UnsupportedError.new(<<-EOS))
+        raise(UnsupportedError.new(<<-EOS))
 
 Currently, CastOff cannot inline block in #{@root_iseq.name}.
 Source file is #{@root_iseq.source_file}.
 Source line is #{@root_iseq.source_line}.
-	EOS
+        EOS
       end
       if inline_block?
-	raise(ReCompilation.new(''))
+        raise(ReCompilation.new(''))
       else
         bug()
       end
@@ -800,7 +794,7 @@ Source line is #{@root_iseq.source_line}.
       if inline_block?
         re_compilation()
       else
-	raise(UnsupportedError.new(msg))
+        raise(UnsupportedError.new(msg))
       end
     end
 
@@ -812,31 +806,31 @@ Source line is #{@root_iseq.source_line}.
     def allocate_id(val)
       case val
       when Symbol
-	robject2csource(val, @namespace, STRMAX).name
+        robject2csource(val, @namespace, STRMAX).name
       when String
-	robject2csource(val.intern, @namespace, STRMAX).name
+        robject2csource(val.intern, @namespace, STRMAX).name
       when Class
-	robject2csource(val.to_s.intern, @namespace, STRMAX).name
+        robject2csource(val.to_s.intern, @namespace, STRMAX).name
       else
-	bug()
+        bug()
       end
     end
 
     def allocate_object(val)
       case val
       when Fixnum
-	  "LONG2FIX(#{val})"
+          "LONG2FIX(#{val})"
       when Symbol
-	name = robject2csource(val, @namespace, STRMAX) # generate ID
-	newname = @namespace.new('symop_' + val.to_s)
-	newname.depends(name)
-	newname.declaration = 'static VALUE'
-	newname.definition = "#{newname.declaration} #{newname.name} = Qundef;"
-	newname.initialization = "#{newname.name} = #{name.expression};" # get Symbol from ID
-	newname.expression = nil
-	newname.to_s
+        name = robject2csource(val, @namespace, STRMAX) # generate ID
+        newname = @namespace.new('symop_' + val.to_s)
+        newname.depends(name)
+        newname.declaration = 'static VALUE'
+        newname.definition = "#{newname.declaration} #{newname.name} = Qundef;"
+        newname.initialization = "#{newname.name} = #{name.expression};" # get Symbol from ID
+        newname.expression = nil
+        newname.to_s
       else
-	robject2csource(val, @namespace, STRMAX).to_s
+        robject2csource(val, @namespace, STRMAX).to_s
       end
     end
 
@@ -893,18 +887,18 @@ Source line is #{@root_iseq.source_line}.
 
     def declare_class_check_function(func)
       unless name = @class_check_functions[func]
-	idx = @class_check_functions.size()
-	name = "class_check_#{idx}"
-	@class_check_functions[func] = name
+        idx = @class_check_functions.size()
+        name = "class_check_#{idx}"
+        @class_check_functions[func] = name
       end
       name
     end
 
     def declare_throw_exception_function(func)
       unless name = @throw_exception_functions[func]
-	idx = @throw_exception_functions.size()
-	name = "throw_exception_#{idx}"
-	@throw_exception_functions[func] = name
+        idx = @throw_exception_functions.size()
+        name = "throw_exception_#{idx}"
+        @throw_exception_functions[func] = name
       end
       name
     end
@@ -919,33 +913,33 @@ Source line is #{@root_iseq.source_line}.
     end
 
     C_CLASS_MAP = {
-      ClassWrapper.new(Fixnum, true)	     => :rb_cFixnum,
-      ClassWrapper.new(Bignum, true)	     => :rb_cBignum,
-      ClassWrapper.new(String, true)	     => :rb_cString,
-      ClassWrapper.new(Array, true)	     => :rb_cArray,
-      ClassWrapper.new(Hash, true)	     => :rb_cHash,
-      ClassWrapper.new(Float, true)	     => :rb_cFloat,
-      ClassWrapper.new(Object, true)	     => :rb_cObject,
-      ClassWrapper.new(IO, true)	     => :rb_cIO,
-      ClassWrapper.new(Module, true)	     => :rb_cModule,
-      ClassWrapper.new(Proc, true)	     => :rb_cProc,
-      ClassWrapper.new(RubyVM, true)	     => :rb_cRubyVM,
-      #ClassWrapper.new(Env, true)	     => :rb_cEnv,
-      ClassWrapper.new(Time, true)	     => :rb_cTime,
-      ClassWrapper.new(Symbol, true)	     => :rb_cSymbol,
-      ClassWrapper.new(Mutex, true)	     => :rb_cMutex,
-      ClassWrapper.new(Thread, true)	     => :rb_cThread,
-      ClassWrapper.new(Struct, true)	     => :rb_cStruct,
-      #ClassWrapper.new(Match, true)	     => :rb_cMatch,
-      ClassWrapper.new(Regexp, true)	     => :rb_cRegexp,
-      ClassWrapper.new(Rational, true)	     => :rb_cRational,
-      ClassWrapper.new(Range, true)	     => :rb_cRange,
-      ClassWrapper.new(NilClass, true)	     => :rb_cNilClass,
-      ClassWrapper.new(Random, true)	     => :rb_cRandom,
-      ClassWrapper.new(Numeric, true)	     => :rb_cNumeric,
-      ClassWrapper.new(Integer, true)	     => :rb_cInteger,
-      ClassWrapper.new(Binding, true)	     => :rb_cBinding,
-      ClassWrapper.new(Method, true)	     => :rb_cMethod,
+      ClassWrapper.new(Fixnum, true)         => :rb_cFixnum,
+      ClassWrapper.new(Bignum, true)         => :rb_cBignum,
+      ClassWrapper.new(String, true)         => :rb_cString,
+      ClassWrapper.new(Array, true)          => :rb_cArray,
+      ClassWrapper.new(Hash, true)           => :rb_cHash,
+      ClassWrapper.new(Float, true)          => :rb_cFloat,
+      ClassWrapper.new(Object, true)         => :rb_cObject,
+      ClassWrapper.new(IO, true)             => :rb_cIO,
+      ClassWrapper.new(Module, true)         => :rb_cModule,
+      ClassWrapper.new(Proc, true)           => :rb_cProc,
+      ClassWrapper.new(RubyVM, true)         => :rb_cRubyVM,
+      #ClassWrapper.new(Env, true)            => :rb_cEnv,
+      ClassWrapper.new(Time, true)           => :rb_cTime,
+      ClassWrapper.new(Symbol, true)         => :rb_cSymbol,
+      ClassWrapper.new(Mutex, true)          => :rb_cMutex,
+      ClassWrapper.new(Thread, true)         => :rb_cThread,
+      ClassWrapper.new(Struct, true)         => :rb_cStruct,
+      #ClassWrapper.new(Match, true)          => :rb_cMatch,
+      ClassWrapper.new(Regexp, true)         => :rb_cRegexp,
+      ClassWrapper.new(Rational, true)       => :rb_cRational,
+      ClassWrapper.new(Range, true)          => :rb_cRange,
+      ClassWrapper.new(NilClass, true)       => :rb_cNilClass,
+      ClassWrapper.new(Random, true)         => :rb_cRandom,
+      ClassWrapper.new(Numeric, true)        => :rb_cNumeric,
+      ClassWrapper.new(Integer, true)        => :rb_cInteger,
+      ClassWrapper.new(Binding, true)        => :rb_cBinding,
+      ClassWrapper.new(Method, true)         => :rb_cMethod,
       ClassWrapper.new(File, true)           => :rb_cFile,
       ClassWrapper.new(FalseClass, true)     => :rb_cFalseClass,
       ClassWrapper.new(TrueClass, true)      => :rb_cTrueClass,
@@ -953,10 +947,10 @@ Source line is #{@root_iseq.source_line}.
       ClassWrapper.new(Encoding, true)       => :rb_cEncoding,
       ClassWrapper.new(Complex, true)        => :rb_cComplex,
       ClassWrapper.new(Dir, true)            => :rb_cDir,
-      #ClassWrapper.new(Stat, true)	     => :rb_cStat,
+      #ClassWrapper.new(Stat, true)           => :rb_cStat,
       ClassWrapper.new(Enumerator, true)     => :rb_cEnumerator,
       ClassWrapper.new(Fiber, true)          => :rb_cFiber,
-      ClassWrapper.new(Data, true)	     => :rb_cData,
+      ClassWrapper.new(Data, true)           => :rb_cData,
       #ClassWrapper.new(Generator, true)     => :rb_cGenerator,
       #ClassWrapper.new(Continuation, true)  => :rb_cContinuation,
       #ClassWrapper.new(ISeq, true)          => :rb_cISeq,
@@ -972,27 +966,27 @@ Source line is #{@root_iseq.source_line}.
       bug() unless klass.is_a?(ClassWrapper)
       name = C_CLASS_MAP[klass]
       if name
-	return name
+        return name
       else
-	if @configuration.has_binding?
-	  begin
-	    path = "::#{klass.to_s}"
-	  rescue CompileError
-	    return nil
-	  end
-	  return nil unless /^[\w:]+$/.match(path)
-	  if klass.singleton?
-	    name = allocate_name("singleton_class_#{path}")
-	    singleton_p = true
-	  else
-	    name = allocate_name("class_#{path}")
-	    singleton_p = false
-	  end
-	  prefetch_constant(name, path, singleton_p)
-	  return name
-	else
-	  return nil
-	end
+        if @configuration.has_binding?
+          begin
+            path = "::#{klass.to_s}"
+          rescue CompileError
+            return nil
+          end
+          return nil unless /^[\w:]+$/.match(path)
+          if klass.singleton?
+            name = allocate_name("singleton_class_#{path}")
+            singleton_p = true
+          else
+            name = allocate_name("class_#{path}")
+            singleton_p = false
+          end
+          prefetch_constant(name, path, singleton_p)
+          return name
+        else
+          return nil
+        end
       end
       bug()
     end
@@ -1014,9 +1008,9 @@ Source line is #{@root_iseq.source_line}.
     SUGGESTION_TABLE.each do |(msg, col, ivar)|
       name = ivar.slice(1, ivar.size - 1)
       eval(<<-EOS, binding)
-	def add_#{name}(msg)
-	  #{ivar} << msg
-	end
+        def add_#{name}(msg)
+          #{ivar} << msg
+        end
       EOS
     end
 
@@ -1027,10 +1021,10 @@ Source line is #{@root_iseq.source_line}.
     def suggest()
       return unless @configuration.development?
       SUGGESTION_TABLE.each do |(msg, col, ivar)|
-	val = instance_variable_get(ivar)
-	bug() unless val.instance_of?(Array)
-	next if val.empty?
-	@suggestion.add_suggestion(msg, col, val)
+        val = instance_variable_get(ivar)
+        bug() unless val.instance_of?(Array)
+        next if val.empty?
+        @suggestion.add_suggestion(msg, col, val)
       end
     end
 
@@ -1052,11 +1046,11 @@ Source line is #{@root_iseq.source_line}.
       c_iseq = nil
       c_depth = nil
       c_body.each do |v|
-	case v when InsnInfo
-	  c_iseq = v.iseq
-	  c_depth = v.depth
-	  break
-	end
+        case v when InsnInfo
+          c_iseq = v.iseq
+          c_depth = v.depth
+          break
+        end
       end
       bug() unless c_iseq && c_depth
 
@@ -1071,12 +1065,12 @@ Source line is #{@root_iseq.source_line}.
 
       # excs
       excs = p_excs + c_excs.map do |(t, i, s, e, c, sp)|
-	# type, iseq, start, end, cont, sp
-	# rename labels(start, end, cont)
-	s = gen_embed_label(s, loop_id)
-	e = gen_embed_label(e, loop_id)
-	c = gen_embed_label(c, loop_id)
-	[t, i, s, e, c, sp]
+        # type, iseq, start, end, cont, sp
+        # rename labels(start, end, cont)
+        s = gen_embed_label(s, loop_id)
+        e = gen_embed_label(e, loop_id)
+        c = gen_embed_label(c, loop_id)
+        [t, i, s, e, c, sp]
       end
 
       # body
@@ -1096,45 +1090,45 @@ Source line is #{@root_iseq.source_line}.
       bug() unless c_depth + 1 == prep.depth + prep.stack_usage()
       b << InsnInfo.new([:cast_off_cont, loop_id, c_args, insn], c_iseq, -1, -1, true, c_depth)
       if c_iseq.args.opt?
-	bug() if inline_block?
-	c_args_opts = c_iseq.args.opts.map{|l| gen_embed_label(l, loop_id) }
-	b << InsnInfo.new([:cast_off_fetch_args, nil], c_iseq, -1, -1, true, c_depth)
-	b << InsnInfo.new([:cast_off_handle_optional_args, c_args_opts, c_iseq.args.argc, false], c_iseq, -1, -1, true, c_depth + 1)
+        bug() if inline_block?
+        c_args_opts = c_iseq.args.opts.map{|l| gen_embed_label(l, loop_id) }
+        b << InsnInfo.new([:cast_off_fetch_args, nil], c_iseq, -1, -1, true, c_depth)
+        b << InsnInfo.new([:cast_off_handle_optional_args, c_args_opts, c_iseq.args.argc, false], c_iseq, -1, -1, true, c_depth + 1)
       end
 
       is_break = false
       break_label = gen_embed_label(:break, loop_id)
       c_body.each do |v|
-	case v
-	when InsnInfo
-	  bug() unless v.support?
-	  if label = v.get_label()
-	    v = v.dup()
-	    v.set_label(gen_embed_label(label, loop_id))
-	  end
+        case v
+        when InsnInfo
+          bug() unless v.support?
+          if label = v.get_label()
+            v = v.dup()
+            v.set_label(gen_embed_label(label, loop_id))
+          end
           case v.op
           when :leave
-	    # leave => jump
-	    b << InsnInfo.new([:cast_off_leave_block, loop_label], c_iseq, -1, -1, true, v.depth)
+            # leave => jump
+            b << InsnInfo.new([:cast_off_leave_block, loop_label], c_iseq, -1, -1, true, v.depth)
           when :throw
-	    type, state, flag, level = v.get_throw_info()
-	    bug() unless flag == 0
-	    case type
-	    when :return
-	      # nothing to do
+            type, state, flag, level = v.get_throw_info()
+            bug() unless flag == 0
+            case type
+            when :return
+              # nothing to do
               b << v
-	      if !inline_block?
-		if @mid
-		  @root_iseq.catch_exception(:return, nil, nil, nil)
-		else
-		  raise(UnsupportedError, "Currently, CastOff.execute doesn't support return statement when block inlining is disabled") 
-		end
-	      end
-	    when :break
+              if !inline_block?
+                if @mid
+                  @root_iseq.catch_exception(:return, nil, nil, nil)
+                else
+                  raise(UnsupportedError, "Currently, CastOff.execute doesn't support return statement when block inlining is disabled") 
+                end
+              end
+            when :break
               is_break = true
               cfg = CFG.new(c_body)
               stack_depth = cfg.find_insn_stack_depth(v)
-	      bug() unless stack_depth
+              bug() unless stack_depth
               bug() unless stack_depth > 0
               num = stack_depth - 1
               if num > 0
@@ -1143,19 +1137,20 @@ Source line is #{@root_iseq.source_line}.
                   b << InsnInfo.new([:pop], c_iseq, -1, -1, true, v.depth - i)
                 end
               end
-              b << InsnInfo.new([:cast_off_break_block, break_label, v.argv[0], loop_id, insn.pc + insn.size], c_iseq, -1, -1, true, c_depth + 1)
-	      insn.iseq.catch_exception(:break, loop_id, break_label, insn.depth + insn.stack_usage()) if !inline_block?
-	    else
-	      bug()
-	    end
-	  else
-	    b << v
-	  end
-	when Symbol
-	  b << gen_embed_label(v, loop_id)
-	else
-	  bug()
-	end
+              bug() unless c_iseq.parent_pc == insn.pc + insn.size
+              b << InsnInfo.new([:cast_off_break_block, break_label, v.argv[0], c_iseq.parent_pc], c_iseq, -1, -1, true, c_depth + 1)
+              insn.iseq.catch_exception(:break, c_iseq.parent_pc, break_label, insn.depth + insn.stack_usage()) if !inline_block?
+            else
+              bug()
+            end
+          else
+            b << v
+          end
+        when Symbol
+          b << gen_embed_label(v, loop_id)
+        else
+          bug()
+        end
       end
       b << loop_label
       b << InsnInfo.new([:cast_off_loop, loop_id, c_args, insn], insn.iseq, -1, -1, true, c_depth + 1)
@@ -1177,93 +1172,97 @@ Source line is #{@root_iseq.source_line}.
       bug() unless lvars_size.is_a?(Integer)
       ary = ary[10..13]
       lvars, args, dummy, body = *ary
+      op_idx = -(lvars_size + 1) # lvar を参照するための get/setlocal, get/setdynamic オペランド, dfp/lfp からの index
       lvars.map! do |l|
-	var = [l, varid, depth, configuration.class_of_variable(l)]
-	varid += 1
-	var
+        var = [l, varid, op_idx, depth, configuration.class_of_variable(l)]
+        varid += 1
+        op_idx += 1
+        var
       end
       if lvars.size < lvars_size
-	#bug() unless depth > 0
-	#def pma1((a), &b) end <= depth == 0 but lvars_size == 4, lvars = [:a, :b]
+        #bug() unless depth > 0
+        #def pma1((a), &b) end <= depth == 0 but lvars_size == 4, lvars = [:a, :b]
 
-	# for block
-	(lvars_size - lvars.size).times do
-	  lvars << [:__lvar, varid, depth, nil]
-	  varid += 1
-	end
+        # for block
+        (lvars_size - lvars.size).times do
+          lvars << [:__lvar, varid, op_idx, depth, nil]
+          varid += 1
+          op_idx += 1
+        end
       end
+      bug() unless op_idx == -1
       current_iseq.set_local_variables(lvars)
       lvars_table << lvars
       body.each do |v|
-	case v when InsnInfo
-	  bug() unless v.support?
-	  if iseq_ary = v.get_iseq()
-	    child_iseq = current_iseq.children[v.pc]
-	    bug() unless child_iseq.is_a?(Iseq)
-	    varid = prepare_local_variable(iseq_ary, configuration, lvars_table.dup, depth + 1, varid, child_iseq)
-	  end
-	  case v.op
+        case v when InsnInfo
+          bug() unless v.support?
+          if iseq_ary = v.get_iseq()
+            child_iseq = current_iseq.children[v.pc]
+            bug() unless child_iseq.is_a?(Iseq)
+            varid = prepare_local_variable(iseq_ary, configuration, lvars_table.dup, depth + 1, varid, child_iseq)
+          end
+          case v.op
           when :getdynamic, :setdynamic, :getlocal, :setlocal
-	    case v.op
-	    when :getdynamic
+            case v.op
+            when :getdynamic
               idx, lv = *v.argv
               if inline_block?
                 insn = [:cast_off_getlvar]
               else
                 insn = [:cast_off_getdvar]
               end
-	    when :setdynamic
+            when :setdynamic
               idx, lv = *v.argv
               if inline_block?
                 insn = [:cast_off_setlvar]
               else
                 insn = [:cast_off_setdvar]
               end
-	    when :getlocal
-	      idx = v.argv[0]
-	      lv = depth # set/getlocal uses lfp
+            when :getlocal
+              idx = v.argv[0]
+              lv = depth # set/getlocal uses lfp
               if inline_block?
-		insn = [:cast_off_getlvar]
-	      else
-		insn = [:cast_off_getdvar]
-	      end
-	    when :setlocal
-	      idx = v.argv[0]
-	      lv = depth # set/getlocal uses lfp
+                insn = [:cast_off_getlvar]
+              else
+                insn = [:cast_off_getdvar]
+              end
+            when :setlocal
+              idx = v.argv[0]
+              lv = depth # set/getlocal uses lfp
               if inline_block?
-		insn = [:cast_off_setlvar]
-	      else
-		insn = [:cast_off_setdvar]
-	      end
-	    else
-	      bug()
-	    end
-	    raise(UnsupportedError.new(<<-EOS)) if 0 > depth - lv
+                insn = [:cast_off_setlvar]
+              else
+                insn = [:cast_off_setdvar]
+              end
+            else
+              bug()
+            end
+            raise(UnsupportedError.new(<<-EOS)) if 0 > depth - lv
 Unsupported operation(#{v.source}).
 Currently, CastOff doesn't support variables defined in an outer block.
-	    EOS
-	    var_index = get_var_index(lvars_table[depth - lv], idx)
-	    bug() unless 0 <= var_index && var_index <= lvars_table[depth - lv].size()
-	    lvar = lvars_table[depth - lv][var_index]
-	    bug() unless lvar
-	    bug() unless (depth - lv) == lvar[2] # name, id, depth, types
+            EOS
+            var_index = get_var_index(lvars_table[depth - lv], idx)
+            bug() unless 0 <= var_index && var_index <= lvars_table[depth - lv].size()
+            lvar = lvars_table[depth - lv][var_index]
+            bug() unless lvar
+            bug() unless (depth - lv) == lvar[3] # name, id, op_idx, depth, types
             insn.concat(lvar)
-	    bug() unless insn.size() == 5
-	    v.update(insn)
+            bug() unless insn.size() == 6
+            v.update(insn)
           when :getinstancevariable, :setinstancevariable
             id, ic = *v.argv
             case v.op
             when :getinstancevariable
-	      insn = [:cast_off_getivar]
+              insn = [:cast_off_getivar]
             when :setinstancevariable
               insn = [:cast_off_setivar]
-	    else
-	      bug()
+            else
+              bug()
             end
             ivar = [id, configuration.class_of_variable(id)]
             insn.concat(ivar)
             bug() if insn.size != 3
-	    v.update(insn)
+            v.update(insn)
           when :getclassvariable, :setclassvariable
             id = v.argv[0]
             case v.op
@@ -1271,29 +1270,29 @@ Currently, CastOff doesn't support variables defined in an outer block.
               insn = [:cast_off_getcvar]
             when :setclassvariable
               insn = [:cast_off_setcvar]
-	    else
-	      bug()
+            else
+              bug()
             end
             cvar = [id, configuration.class_of_variable(id)]
             insn.concat(cvar)
             bug() if insn.size != 3
-	    v.update(insn)
-	  when :getglobal, :setglobal
-	    gentry = v.argv[0]
-	    case v.op
-	    when :getglobal
-	      insn = [:cast_off_getgvar]
-	    when :setglobal
-	      insn = [:cast_off_setgvar]
-	    else
-	      bug()
-	    end
-	    gvar = [gentry, configuration.class_of_variable(gentry)]
-	    insn.concat(gvar)
-	    bug() if insn.size != 3
-	    v.update(insn)
-	  end
-	end
+            v.update(insn)
+          when :getglobal, :setglobal
+            gentry = v.argv[0]
+            case v.op
+            when :getglobal
+              insn = [:cast_off_getgvar]
+            when :setglobal
+              insn = [:cast_off_setgvar]
+            else
+              bug()
+            end
+            gvar = [gentry, configuration.class_of_variable(gentry)]
+            insn.concat(gvar)
+            bug() if insn.size != 3
+            v.update(insn)
+          end
+        end
       end
       varid
     end
@@ -1319,15 +1318,15 @@ Currently, CastOff doesn't support variables defined in an outer block.
               when :putnil
                 flag = false
               else
-		raise(UnsupportedError.new(<<-EOS))
+                raise(UnsupportedError.new(<<-EOS))
 
 Currently, CastOff cannot handle this constant reference.
 --- source code ---
 #{v.source}
-		EOS
+                EOS
               end
               nb << InsnInfo.new([:pop], v.iseq, -1, -1, true, v.depth) # pop Object or nil
-	      n_insn = InsnInfo.new([:cast_off_getconst, flag], v.iseq, -1, -1, true, v.depth - 1)
+              n_insn = InsnInfo.new([:cast_off_getconst, flag], v.iseq, -1, -1, true, v.depth - 1)
               nb << n_insn
               buf = n_insn.argv
             end
@@ -1354,59 +1353,59 @@ Currently, CastOff cannot handle this constant reference.
       nb = []
       body = ary[13]
       body.each do |v|
-	case v
-	when InsnInfo # instruction
-	  bug() unless v.support?
-	  if iseq_ary = v.get_iseq()
-	    prepare_branch_instruction_and_line_no(iseq_ary)
-	  end
-	  if !v.ignore?
-	    case v.op
-	    when :getinlinecache
-	      nb << InsnInfo.new([:putnil], v.iseq, -1, -1, true, v.depth)
-	    when :opt_case_dispatch
-	      nb << InsnInfo.new([:pop], v.iseq, -1, -1, true, v.depth)
-	    else
-	      nb << v
-	    end
-	  end
-	when Symbol  # label
-	  nb << v
-	when Integer # line
-	  # ignore
-	else
-	  raise(CompileError, 'wrong format iseq')
-	end
+        case v
+        when InsnInfo # instruction
+          bug() unless v.support?
+          if iseq_ary = v.get_iseq()
+            prepare_branch_instruction_and_line_no(iseq_ary)
+          end
+          if !v.ignore?
+            case v.op
+            when :getinlinecache
+              nb << InsnInfo.new([:putnil], v.iseq, -1, -1, true, v.depth)
+            when :opt_case_dispatch
+              nb << InsnInfo.new([:pop], v.iseq, -1, -1, true, v.depth)
+            else
+              nb << v
+            end
+          end
+        when Symbol  # label
+          nb << v
+        when Integer # line
+          # ignore
+        else
+          raise(CompileError, 'wrong format iseq')
+        end
       end
       ary[13] = nb
     end
 
     def prepare_throw_instruction(body)
       nb = body.map do |v|
-	case v
+        case v
         when InsnInfo
-	  case v.op
-	  when :throw
-	    type, state, flag, level = v.get_throw_info()
-	    bug() unless flag == 0
-	    case type
-	    when :return
-	      if execute?
-		v
-	      else
-		inline_block? ? InsnInfo.new([:leave], v.iseq, -1, -1, true, v.depth) : v
-	      end
-	    when :break
-	      bug() # should not be reached
-	    else
-	      bug()
-	    end
+          case v.op
+          when :throw
+            type, state, flag, level = v.get_throw_info()
+            bug() unless flag == 0
+            case type
+            when :return
+              if execute?
+                v
+              else
+                inline_block? ? InsnInfo.new([:leave], v.iseq, -1, -1, true, v.depth) : v
+              end
+            when :break
+              bug() # should not be reached
+            else
+              bug()
+            end
           else
             v
-	  end
+          end
         else
           v
-	end
+        end
       end
       nb
     end
@@ -1417,9 +1416,9 @@ Currently, CastOff cannot handle this constant reference.
       body = ary[13]
 
       excs.each do |(t, i, s, e, c, sp)|
-	# type, iseq, start, end, cont, sp
+        # type, iseq, start, end, cont, sp
         case t when :rescue, :ensure
-	  # CastOff doesn't support rescue and ensure.
+          # CastOff doesn't support rescue and ensure.
           raise(UnsupportedError, "Currently, CastOff cannot handle #{t}") 
         end
       end
@@ -1427,38 +1426,38 @@ Currently, CastOff cannot handle this constant reference.
       pc = 0
       line = -1
       body.map! do |v|
-	case v
-	when Array
-	  bug() if pc < 0
-	  insn = InsnInfo.new(v, current_iseq, pc, line)
-	  raise(UnsupportedError, insn.get_unsupport_message()) unless insn.support?
-	  pc += v.size()
-	  insn
-	when Symbol
-	  pc = /label_/.match(v).post_match.to_i
-	  v
-	when Integer
-	  line = v
-	  nil
-	end
+        case v
+        when Array
+          bug() if pc < 0
+          insn = InsnInfo.new(v, current_iseq, pc, line)
+          raise(UnsupportedError, insn.get_unsupport_message()) unless insn.support?
+          pc += v.size()
+          insn
+        when Symbol
+          pc = /label_/.match(v).post_match.to_i
+          v
+        when Integer
+          line = v
+          nil
+        end
       end
       body.compact!()
 
       cfg = CFG.new(body)
       body.each do |v|
-	next unless v.instance_of?(InsnInfo)
-	d = cfg.find_insn_stack_depth(v)
-	v.set_stack_depth(d + current_depth) if d
+        next unless v.instance_of?(InsnInfo)
+        d = cfg.find_insn_stack_depth(v)
+        v.set_stack_depth(d + current_depth) if d
       end
 
       body.each do |v|
-	next unless v.instance_of?(InsnInfo)
-	if iseq_ary = v.get_iseq()
-	  bug() unless v.op == :send
-	  child_iseq = Iseq.new(get_child_iseq(current_iseq.iseq, v.pc), current_iseq, v.depth + v.stack_usage - 1)
-	  current_iseq.add(child_iseq, v.pc)
-	  annotate_instruction(iseq_ary, child_iseq, v.depth + v.stack_usage - 1)
-	end
+        next unless v.instance_of?(InsnInfo)
+        if iseq_ary = v.get_iseq()
+          bug() unless v.op == :send
+          child_iseq = Iseq.new(get_child_iseq(current_iseq.iseq, v.pc), current_iseq, v.depth + v.stack_usage - 1, v.pc + v.size)
+          current_iseq.add(child_iseq, v.pc)
+          annotate_instruction(iseq_ary, child_iseq, v.depth + v.stack_usage - 1)
+        end
       end
     end
 
@@ -1471,18 +1470,18 @@ Currently, CastOff cannot handle this constant reference.
       loop_id = 0
       continue = true
       while continue
-	continue = false
-	body.each_with_index do |v, index|
-	  case v when InsnInfo
-	    bug() unless v.support?
-	    if iseq_ary = v.get_iseq()
-	      lvars, args, excs, body = embed(lvars, args, excs, body, index, iseq_ary, loop_id)
-	      continue = true
-	      break
-	    end
-	  end
-	end
-	loop_id += 1
+        continue = false
+        body.each_with_index do |v, index|
+          case v when InsnInfo
+            bug() unless v.support?
+            if iseq_ary = v.get_iseq()
+              lvars, args, excs, body = embed(lvars, args, excs, body, index, iseq_ary, loop_id)
+              continue = true
+              break
+            end
+          end
+        end
+        loop_id += 1
       end
 
       body = prepare_throw_instruction(body)
@@ -1490,12 +1489,12 @@ Currently, CastOff cannot handle this constant reference.
 
       ivars = []
       body.each do |v|
-	case v when InsnInfo
-	  case v.op
-	  when :cast_off_getivar, :cast_off_setivar
-	    ivars << v.argv[0]
-	  end
-	end
+        case v when InsnInfo
+          case v.op
+          when :cast_off_getivar, :cast_off_setivar
+            ivars << v.argv[0]
+          end
+        end
       end
       ivars.uniq!
 
@@ -1507,26 +1506,26 @@ Currently, CastOff cannot handle this constant reference.
       if @complex_call
         block = block_argument_p ? '&' : ''
         post = post_len ? post_len : 0
-	rest = rest_index ? '*' : ''
-	opt = opts ? opts.size() - 1 : 0
-	must = @root_iseq.args.argc
-	if opts
-	  body.unshift(InsnInfo.new([:cast_off_handle_optional_args, opts, must, rest_index], @root_iseq, -1, -1, true, 1))
-	else
-	  body.unshift(InsnInfo.new([:pop], @root_iseq, -1, -1, true, 1))
-	end
-	body.unshift(InsnInfo.new([:cast_off_fetch_args, [must, opt, rest, post, block, lvars.slice(0, @arg_size)]], @root_iseq, -1, -1, true, 0))
+        rest = rest_index ? '*' : ''
+        opt = opts ? opts.size() - 1 : 0
+        must = @root_iseq.args.argc
+        if opts
+          body.unshift(InsnInfo.new([:cast_off_handle_optional_args, opts, must, rest_index], @root_iseq, -1, -1, true, 1))
+        else
+          body.unshift(InsnInfo.new([:pop], @root_iseq, -1, -1, true, 1))
+        end
+        body.unshift(InsnInfo.new([:cast_off_fetch_args, [must, opt, rest, post, block, lvars.slice(0, @arg_size)]], @root_iseq, -1, -1, true, 0))
       end
 
       decl = []
       lvars.each_with_index do |l, index|
-	if index < @arg_size
-	  bug() if execute?
-	  op = :cast_off_decl_arg
-	else
-	  op = :cast_off_decl_var
-	end
-	decl.push(InsnInfo.new([op] + l, @root_iseq, -1, -1, true, 0))
+        if index < @arg_size
+          bug() if execute?
+          op = :cast_off_decl_arg
+        else
+          op = :cast_off_decl_var
+        end
+        decl.push(InsnInfo.new([op] + l, @root_iseq, -1, -1, true, 0))
       end
       body = decl.reverse + body
 
@@ -1541,18 +1540,18 @@ Currently, CastOff cannot handle this constant reference.
       itype = ary[9] # iseq type
 
       unless magic == 'YARVInstructionSequence/SimpleDataFormat' \
-	  && major == 1 \
-	  && minor == 2 \
-	  && ftype == 1 \
-	  && (itype == :block || itype == :method)
-	raise(CompileError, <<-EOS)
+          && major == 1 \
+          && minor == 2 \
+          && ftype == 1 \
+          && (itype == :block || itype == :method)
+        raise(CompileError, <<-EOS)
 wrong format iseq
 magic: #{magic}
 major: #{major}
 minor: #{minor}
 ftype: #{ftype}
 itype: #{itype}
-	EOS
+        EOS
       end
 
       itype
