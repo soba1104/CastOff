@@ -1,10 +1,10 @@
 Gem::Specification.new do |spec|
   spec.name		      = "cast_off"
-  spec.version		      = "0.2.0"
+  spec.version		      = "0.2.1"
   spec.platform		      = Gem::Platform::RUBY
-  spec.summary		      = "performance improvement tool for Ruby1.9.3"
+  spec.summary		      = "Performance improvement tool for Ruby1.9.3"
   spec.description	      = <<-EOS
-CastOff is performance improvement tool for Ruby1.9.3
+CastOff is a performance improvement tool for Ruby1.9.3
   EOS
   spec.files		      = Dir['{lib/**/*,ext/**/*}'] + %w[
 				  cast_off.gemspec
@@ -20,6 +20,6 @@ CastOff is performance improvement tool for Ruby1.9.3
   spec.email		      = 'shiba@rvm.jp'
   spec.homepage		      = 'http://github.com/soba1104/CastOff'
   #spec.rubyforge_project     = 'cast_off'
-  spec.required_ruby_version  = '> 1.9.2'
+  spec.required_ruby_version  = '= 1.9.3'
 end
 
