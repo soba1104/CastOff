@@ -103,30 +103,31 @@ CastOff.verbose(verbose)
 
 case step
 when nil
-  STDERR.puts("-------------------------------- compilation start, threshold = #{threshold}, name = #{name}: #{args} --------------------------------")
+  STDERR.puts("-------------------------------- compilation start: threshold = #{threshold}, name = #{name}, profiling = ruby #{args} --------------------------------")
   2.times{|i| system("#{this} --step-#{i + 1} --threshold=#{threshold} --name=#{name} #{deoptimize ? '--deoptimize' : ''} #{verbose ? '--verbose' : ''} #{args}")}
 when '1'
-  STDERR.puts("-------------------------------- step 1 --------------------------------")
+  STDERR.puts("-------------------------------- step 1 --------------------------------") if verbose
   CastOff.development(true)
   CastOff.use_base_configuration(false)
   CastOff.autocompile()
 when '2'
-  STDERR.puts("-------------------------------- step 2 --------------------------------")
+  STDERR.puts("-------------------------------- step 2 --------------------------------") if verbose
   CastOff.development(true)
   CastOff.use_base_configuration(false)
   CastOff.autoload()
-  #fin = Object.new
-  #ObjectSpace.define_finalizer(fin){
   at_exit{
     CastOff.development(false)
     CastOff.use_base_configuration(true)
     # step 3
     CastOff.load(true)
+  }
+  fin = Object.new
+  ObjectSpace.define_finalizer(fin){
     msg = <<-EOS
 
 ----------------------------------------------------------------------------------------
 Compilation finished successfully.
-Please add following lines to #{script}.
+Please add following lines to top of #{script}.
 
 require 'cast_off'
 #{configuration.chomp}

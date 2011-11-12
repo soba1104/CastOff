@@ -35,6 +35,14 @@ module CastOff
         dir
       end
 
+      def self.delete_from_compiled(entry)
+        compiled = load_autocompiled()
+        return false unless compiled
+        return false unless compiled.delete(entry)
+        dump_auto_compiled(compiled)
+        return true
+      end
+
       def self.load_autocompiled()
         begin
           dir = program_dir()

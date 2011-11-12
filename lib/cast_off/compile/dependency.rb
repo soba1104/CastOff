@@ -81,7 +81,13 @@ module CastOff
         dep = @@singleton_method_dependency[obj]
         return false unless dep
         return false unless dep.include?(mid)
-        bug() unless @@singleton_method_dependency_initializers[[obj, mid]]
+        unless @@singleton_method_dependency_initializers[[obj, mid]]
+          if mid == :method_added || mid == :singleton_method_added
+            return []
+          else
+            bug()
+          end
+        end
         @@singleton_method_dependency_initializers[[obj, mid]]
       end
 
@@ -121,19 +127,20 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
       end
 
       def add(klass, mid, strong_p)
-        # TODO klass から、対象メソッドを定義しているクラスまでのメソッドの検索対象を全てフック
+        # TODO include で継承関係が変わったのを検出
         bug() unless klass.instance_of?(ClassWrapper)
         targets = [klass]
         if not klass.singleton?
-          c = klass.contain_class
-          cm = CastOff.override_target(c, mid)
-          case cm
-          when Class
-            targets << ClassWrapper.new(cm, true) if cm != c
-          when Module
-            targets << ModuleWrapper.new(cm)
-          else
-            bug()
+          klass.each_method_search_target(mid) do |cm|
+            next if cm == klass.contain_class
+            case cm
+            when Class
+              targets << ClassWrapper.new(cm, true)
+            when Module
+              targets << ModuleWrapper.new(cm)
+            else
+              bug()
+            end
           end
         end
         targets.each do |t|
@@ -186,16 +193,28 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
             end
           end
 
+          begin
+            singleton_method_added = o.method(:singleton_method_added)
+          rescue NameError
+            singleton_method_added = nil
+          end
+          begin
+            method_added = o.method(:method_added)
+          rescue NameError
+            method_added = nil
+          end
           define_method(:method_added) do |mid|
             if self == o && !Dependency.ignore_overridden?(self, mid)
               if Dependency.singleton_method_added?
                 CastOff.dlog("singleton method added #{o}.#{mid}")
                 CastOff.delete_original_singleton_method_iseq(self, mid)
                 override_singleton_method(o, mid, :added) 
+                singleton_method_added.call(mid) if singleton_method_added
               else
                 CastOff.dlog("method added #{o}##{mid}")
                 CastOff.delete_original_instance_method_iseq(self, mid)
                 override_method(o, mid, :added)
+                method_added.call(mid) if method_added
               end
             end
             super(mid) rescue NoMethodError

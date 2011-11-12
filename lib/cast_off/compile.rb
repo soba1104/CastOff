@@ -32,9 +32,10 @@ module CastOff
         @@autoload_proc.call()
         return true 
       end
-      return true if load()
 
-      compiled = nil
+      # Marshal.load で定数を参照したときに、クラス定義が走る可能性があるので、
+      # @@autoload_proc を定義する前に、Marshal.load を呼び出しておく。
+      compiled = CodeManager.load_autocompiled()
       @@autoload_proc = lambda {
         compiled = CodeManager.load_autocompiled() unless compiled
         return false unless compiled
@@ -43,6 +44,7 @@ module CastOff
         fin
       }
       hook_class_definition_end(@@autoload_proc)
+      @@autoload_proc.call()
       true
     end
 
@@ -200,15 +202,34 @@ module CastOff
       __send__(sign, recv)
     end
 
+    def autocompile_running?
+      !!@@autocompile_proc
+    end
+
+    def autoload_running?
+      !!@@autoload_proc
+    end
+
+    def compiler_running?
+      !!Thread.current[COMPILER_RUNNING_KEY]
+    end
+
     private
+
+    COMPILER_RUNNING_KEY = :CastOffCompilerRunning
+    def compiler_running(bool)
+      Thread.current[COMPILER_RUNNING_KEY] = bool
+    end
 
     def execute_no_hook()
       bug() unless block_given?
       begin
+        compiler_running(true)
         hook_m = hook_method_invocation(nil)
         hook_c = hook_class_definition_end(nil)
         yield
       ensure
+        compiler_running(false)
         if hook_m
           bug() unless autocompile_running?
           hook_method_invocation(@@autocompile_proc)
@@ -370,33 +391,42 @@ Currently, CastOff cannot compile method which source file is not exist.
       conf
     end
 
+    @@skipped = []
     def __load(compiled)
       begin
-        compiled.dup.each do |entry|
+        (@@skipped + compiled.dup).each do |entry|
           klass, mid, singleton, file, line, bind = entry
           if @@blacklist.include?(mid)
             compiled.delete(entry)
             next
           end
           bind = bind.bind if bind
-          entry.pop # release BindingWrapper
+          skip = false
           if singleton
             iseq = @@original_singleton_method_iseq[[klass, mid]] || get_iseq(klass, mid, true)
           else
-            t = override_target(klass, mid)
-            iseq = @@original_instance_method_iseq[[t, mid]] || get_iseq(klass, mid, false)
-          end
-          f, l = *iseq.to_a.slice(7, 2)
-          if f == file && l == line
             begin
+              t = override_target(klass, mid)
+              iseq = @@original_instance_method_iseq[[t, mid]] || get_iseq(klass, mid, false)
+            rescue CompileError, UnsupportedError
+              @@skipped |= [entry]
+              dlog("skip: entry = #{entry}")
+              skip = true
+            end
+          end
+          f, l = *iseq.to_a.slice(7, 2) unless skip
+          if !skip && f == file && l == line
+            begin
+              @@skipped.delete(entry)
               if singleton
                 CastOff.compile_singleton_method(klass, mid, bind)
               else
                 CastOff.compile(klass, mid, bind)
               end
               vlog("load #{klass}##{mid}")
-            rescue UnsupportedError
-              vlog("unsupported #{klass}##{mid}")
+            rescue UnsupportedError => e
+              vlog("unsupported #{klass}##{mid} => #{e}")
+              CodeManager.delete_from_compiled(entry)
             end
           else
             dlog("iseq.filepath = #{f}, file = #{file}\niseq.line = #{l}, line = #{line}")
@@ -404,7 +434,7 @@ Currently, CastOff cannot compile method which source file is not exist.
           compiled.delete(entry)
         end
         if compiled.empty?
-          vlog("---------- load finish ----------")
+          vlog("---------- load finish ----------") if @@skipped.empty?
           true
         else
           false
@@ -415,12 +445,12 @@ Currently, CastOff cannot compile method which source file is not exist.
       end
     end
 
-    def autocompile_running?
-      !!@@autocompile_proc
-    end
-
-    def autoload_running?
-      !!@@autoload_proc
+    BasicObject.class_eval do
+      def self.method_added(mid)
+        if CastOff.autoload_running? && !@@skipped.empty? && !CastOff.compiler_running?
+          @@autoload_proc.call()
+        end
+      end
     end
 
     def __autocompile(klass, mid, bind_table, location_table, index)
@@ -428,6 +458,7 @@ Currently, CastOff cannot compile method which source file is not exist.
       return nil if klass.name =~ /CastOff/ # ここで弾いておかないと、__compile の require で __load が走る。
                                             # Namespace のほうはあらかじめ require しておくことで回避。
                                             # Namespace 以外は CastOff を含むので問題無し。
+      return nil if mid == :method_added || mid == :singleton_method_added
       if klass.instance_methods(false).include?(mid) || klass.private_instance_methods(false).include?(mid)
         singleton = false
       else

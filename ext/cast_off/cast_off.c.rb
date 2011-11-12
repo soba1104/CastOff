@@ -278,6 +278,18 @@ cast_off_instruction_class_information_in_ic(VALUE self, VALUE iseqval)
   }
 }
 
+static void method_not_found(VALUE km, ID mid, int class_p)
+{
+  VALUE name;
+
+  if (class_p) {
+    name = rb_class_path(km);
+  } else {
+    name = rb_mod_name(km);
+  }
+  rb_raise(rb_eCastOffCompileError, "method not found (%s#%s)", RSTRING_PTR(name), rb_id2name(mid));
+}
+
 static VALUE cast_off_override_target(VALUE self, VALUE km, VALUE msym)
 {
   ID mid;
@@ -302,14 +314,7 @@ static VALUE cast_off_override_target(VALUE self, VALUE km, VALUE msym)
   me = search_method(km, mid);
 
   if (!me) {
-    VALUE name;
-
-    if (class) {
-      name = rb_class_path(km);
-    } else {
-      name = rb_mod_name(km);
-    }
-    rb_raise(rb_eCastOffCompileError, "method not found (%s#%s)", RSTRING_PTR(name), rb_id2name(mid));
+    method_not_found(km, mid, class);
   }
 
   target = me->klass;
@@ -745,6 +750,45 @@ static VALUE cast_off_class_wrapper_contain_object(VALUE self)
   } else {
     rb_bug("should not be reached");
   }
+}
+
+static VALUE cast_off_class_wrapper_each_method_search_target(VALUE self, VALUE midsym)
+{
+  class_wrapper_t *wrapper = cast_off_class_wrapper_get_wrapper(self);
+  VALUE klass = wrapper->klass;
+  ID mid = SYM2ID(midsym);
+
+  if (rb_obj_class(midsym) != rb_cSymbol || rb_obj_class(klass) != rb_cClass) {
+    rb_bug("cast_off_class_wrapper_each_method_search_target: should not be reached(0)");
+  }
+
+  while (1) {
+    st_data_t body;
+
+    if (!klass) {
+      method_not_found(wrapper->klass, mid, 1);
+    }
+    if (TYPE(klass) == T_ICLASS) {
+      VALUE module = RBASIC(klass)->klass;
+      if (TYPE(module) != T_MODULE) {
+        rb_bug("cast_off_class_wrapper_each_method_search_target: should not be reached(1)");
+      }
+      rb_yield(module);
+    } else if (TYPE(klass) == T_CLASS) {
+      if (FL_TEST(klass, FL_SINGLETON)) {
+        rb_bug("cast_off_class_wrapper_each_method_search_target: should not be reached(2)");
+      }
+      rb_yield(klass);
+    } else {
+      rb_bug("cast_off_class_wrapper_each_method_search_target: should not be reached(3)");
+    }
+    if(st_lookup(RCLASS_M_TBL(klass), mid, &body)) {
+      break;
+    }
+    klass = RCLASS_SUPER(klass);
+  }
+
+  return Qtrue;
 }
 
 #define define_type_checker(klass) \
@@ -1339,6 +1383,7 @@ void Init_cast_off(void)
   rb_define_method(rb_cCastOffClassWrapper, "instance_method_exist?", cast_off_class_wrapper_instance_method_exist_p, 1);
   rb_define_method(rb_cCastOffClassWrapper, "contain_class", cast_off_class_wrapper_contain_class, 0);
   rb_define_method(rb_cCastOffClassWrapper, "contain_object", cast_off_class_wrapper_contain_object, 0);
+  rb_define_method(rb_cCastOffClassWrapper, "each_method_search_target", cast_off_class_wrapper_each_method_search_target, 1);
 //#define register_type_checker(klass) rb_define_method(rb_cCastOffClassWrapper, "##klass##?", cast_off_class_wrapper_##klass##_p, 0)
 //register_type_checker(String);
 //register_type_checker(Array);

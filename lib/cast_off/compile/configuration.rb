@@ -110,7 +110,7 @@ o = Object
       end
 
       def hash()
-        bug()
+        BindingWrapper.hash
       end
     end
 

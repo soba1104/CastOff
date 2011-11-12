@@ -1919,7 +1919,11 @@ You should not use #{@method_id} method in compilation target of CastOff.
         if @translator.reciever_class && @translator.reciever_class.size() == 1
           same_class = true if recv.is_just?(@translator.reciever_class[0])
         end
-        same_class = true if recv.is_a?(Self) && (@translator.inline_block? || @insn.iseq.root?)
+        recv_defn = param_irs.first.get_definition(recv)
+        if recv_defn.size == 1 && (@translator.inline_block? || @insn.iseq.root?)
+          recv_defn = recv_defn.first
+          same_class |= recv_defn.is_a?(SubIR) && recv_defn.src.is_a?(Self)
+        end
         if same_class && mid == @translator.mid
           true
         else
