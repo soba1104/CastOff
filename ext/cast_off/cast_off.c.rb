@@ -337,7 +337,7 @@ static VALUE cast_off_get_iseq(VALUE self, VALUE obj, VALUE mid, VALUE singleton
   rb_method_definition_t *def;
   VALUE km;
   int class;
-  char *msg = NULL;
+  const char *msg = NULL;
   VALUE name;
 
   if (singleton_p == Qtrue) {
@@ -484,7 +484,9 @@ static size_t cast_off_class_wrapper_memsize(const void *wrapper)
 
 static const rb_data_type_t cast_off_class_wrapper_data_type = {
   "cast_off_class_wrapper",
-  {cast_off_class_wrapper_mark, cast_off_class_wrapper_free, cast_off_class_wrapper_memsize},
+  cast_off_class_wrapper_mark,
+  cast_off_class_wrapper_free,
+  cast_off_class_wrapper_memsize,
 };
 
 static VALUE cast_off_allocate_class_wrapper(VALUE klass)
@@ -830,7 +832,9 @@ static size_t cast_off_module_wrapper_memsize(const void *wrapper)
 
 static const rb_data_type_t cast_off_module_wrapper_data_type = {
   "cast_off_module_wrapper",
-  {cast_off_module_wrapper_mark, cast_off_module_wrapper_free, cast_off_module_wrapper_memsize},
+  cast_off_module_wrapper_mark,
+  cast_off_module_wrapper_free,
+  cast_off_module_wrapper_memsize,
 };
 
 static VALUE cast_off_allocate_module_wrapper(VALUE klass)
@@ -955,7 +959,9 @@ static size_t cast_off_method_wrapper_memsize(const void *wrapper)
 
 static const rb_data_type_t cast_off_method_wrapper_data_type = {
   "cast_off_method_wrapper",
-  {cast_off_method_wrapper_mark, cast_off_method_wrapper_free, cast_off_method_wrapper_memsize},
+  cast_off_method_wrapper_mark,
+  cast_off_method_wrapper_free,
+  cast_off_method_wrapper_memsize,
 };
 
 static VALUE cast_off_allocate_method_wrapper(VALUE klass)
@@ -1237,7 +1243,9 @@ static void cast_off_method_invocation_handler(rb_event_flag_t event, VALUE proc
   argv[5] = klass ? klass : Qnil;
   argv[6] = caller_info(th);
 
-  return rb_proc_call_with_block(proc, 7, argv, Qnil);
+  rb_proc_call_with_block(proc, 7, argv, Qnil);
+
+  return;
 }
 
 static VALUE cast_off_hook_method_invocation(VALUE self, VALUE proc)
