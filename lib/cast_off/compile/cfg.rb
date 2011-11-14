@@ -357,8 +357,6 @@ module CastOff::Compiler
             case d
             when Literal
               bug()
-            when Self
-              ir.add_sampling_variable(d)
             when SubIR
               d.add_sampling_variable(d.src)
               #ir.add_sampling_variable(d.src)

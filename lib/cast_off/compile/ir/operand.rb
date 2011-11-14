@@ -161,18 +161,7 @@ module CastOff::Compiler
       end
 
       def reset()
-        @ignore.clear()
-        case @state
-        when :undefined
-          bug()
-        when :initialized, :dynamic
-          @types = []
-          @state = :undefined
-        when :static
-          # nothing to do
-        else
-          bug()
-        end
+        bug()
       end
 
       def not_initialized()
@@ -563,11 +552,55 @@ module CastOff::Compiler
       end
     end
 
-    class Self < TypeContainer
+    class Variable < TypeContainer
+      def initialize()
+        super()
+        @isclassexact = false
+      end
+
+      def class_exact?
+        @isclassexact
+      end
+
+      def is_class_exact()
+        bug() if @isclassexact
+        @isclassexact = true
+      end
+
+      def has_undefined_path()
+        # nothing to do
+      end
+
+      def declare?
+        self.is_a?(LocalVariable) || self.is_a?(TmpVariable) || self.is_a?(Pointer)
+      end
+
+      def reset()
+        @ignore.clear()
+        case @state
+        when :undefined
+          bug()
+        when :initialized, :dynamic
+          @types = []
+          @state = :undefined
+        when :static
+          # nothing to do
+        else
+          bug()
+        end
+      end
+    end
+
+    class Self < Variable
       include CastOff::Util
 
-      def initialize(translator)
+      attr_reader :iseq
+
+      def initialize(translator, iseq)
         super()
+        @iseq = iseq
+        @translator = translator
+        bug() unless @iseq.is_a?(Iseq)
         reciever_class = translator.reciever_class
         if reciever_class
           #is_static(reciever_class)
@@ -591,7 +624,10 @@ module CastOff::Compiler
       end
 
       def eql?(v)
-        v.is_a?(Self)
+        #v.is_a?(Self)
+        return false unless v.is_a?(Self)
+        return true if @translator.inline_block?
+        @iseq == v.iseq
       end
 
       def ==(v)
@@ -601,29 +637,13 @@ module CastOff::Compiler
       def hash
         self.to_name.hash
       end
-    end
 
-    class Variable < TypeContainer
-      def initialize()
-        super()
-        @isclassexact = false
+      def to_debug_string
+        "#{super}(#{@iseq})"
       end
 
-      def class_exact?
-        @isclassexact
-      end
-
-      def is_class_exact()
-        bug() if @isclassexact
-        @isclassexact = true
-      end
-
-      def has_undefined_path()
+      def reset()
         # nothing to do
-      end
-
-      def declare?
-        self.is_a?(LocalVariable) || self.is_a?(TmpVariable) || self.is_a?(Pointer)
       end
     end
 

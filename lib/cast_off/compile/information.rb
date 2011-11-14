@@ -165,6 +165,8 @@ module CastOff::Compiler
             ret |= var.is_dynamic()
           when Pointer, Argument
             ret |= var.is_dynamic()
+          when Self
+            bug() if var.undefined?
           else
             bug(var)
           end
@@ -181,7 +183,7 @@ module CastOff::Compiler
         ds = @variable_definition.select{|d| var == d.result_variable }
         if @undefs.include?(var) || ds.empty?
           case var
-          when TmpBuffer, Pointer, Argument
+          when TmpBuffer, Pointer, Argument, Self
             return false
           else
             bug(var)
@@ -739,22 +741,24 @@ module CastOff::Compiler
         @guards.freeze()
         @variable_definition.freeze()
       end
+
+      def to_s()
+        @guards.map{|g| "#{g.to_debug_string()}"}.join(", ")
+      end
     end
 
     def inject_guards()
       vars = all_variable()
       ptrs = all_pointer()
-      guards = []
+      vars.freeze()
+      ptrs.freeze()
       @blocks.each do |b|
         b.irs.map! do |ir|
           g = ir.generate_guard(vars)
-          guards << g
           g ? [g, ir] : ir
         end
         b.irs.flatten!
       end
-      guards.compact()
-      guards.freeze()
 
       bug() if @blocks.find{|b| not b.information.frozen?}
       @blocks.each{|b| b.in_guards = Guards.new(b, b.information, [], ptrs)}
@@ -763,7 +767,7 @@ module CastOff::Compiler
         change = false
         @blocks.each do |b0|
           next if b0.entry_point?
-          in_guards = b0.pre.inject(Guards.new(b0, b0.information, guards, ptrs)){|in_g, b1| in_g & b1.in_guards.final_state()}
+          in_guards = b0.pre.inject(Guards.new(b0, b0.information, vars, ptrs)){|in_g, b1| in_g & b1.in_guards.final_state()}
           change = true if b0.in_guards != in_guards
           b0.in_guards = in_guards
         end

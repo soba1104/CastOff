@@ -130,7 +130,7 @@ Call site is (#{insn}).
 
           if fcall
             stack.pop();
-            irs << SubIR.new(Self.new(translator), TmpVariable.new(stack.push()), InsnInfo.new([:putself], insn.iseq, -1, -1, true), cfg)
+            irs << SubIR.new(Self.new(translator, insn.iseq), TmpVariable.new(stack.push()), InsnInfo.new([:putself], insn.iseq, -1, -1, true), cfg)
           end
           recv = TmpVariable.new(stack.pop())
           recv.is_also(insn.ic_class) if insn.ic_class
@@ -160,7 +160,7 @@ Call site is (#{insn}).
         when :putnil
           irs << SubIR.new(Literal.new(nil, translator), TmpVariable.new(stack.push()), insn, cfg)
         when :putself
-          irs << SubIR.new(Self.new(translator), TmpVariable.new(stack.push()), insn, cfg)
+          irs << SubIR.new(Self.new(translator, insn.iseq), TmpVariable.new(stack.push()), insn, cfg)
         when :putstring
           obj = argv[0]
           param = []
@@ -468,7 +468,7 @@ Call site is (#{insn}).
 
           if fcall
             stack.pop();
-            irs << SubIR.new(Self.new(translator), TmpVariable.new(stack.push()), InsnInfo.new([:putself], insn.iseq, -1, -1, true), cfg)
+            irs << SubIR.new(Self.new(translator, insn.iseq), TmpVariable.new(stack.push()), InsnInfo.new([:putself], insn.iseq, -1, -1, true), cfg)
           end
           recv = TmpVariable.new(stack.pop())
           param = []
@@ -744,7 +744,7 @@ Call site is (#{insn}).
 
       def get_definition(target)
         case target
-        when Self, Literal
+        when Literal
           return [target]
         when Variable
           ds = @information.variable_definition_of(target)
@@ -776,7 +776,7 @@ Call site is (#{insn}).
         ary = get_definition(target)
         ary.map {|d|
           case d
-          when Self, Literal
+          when Literal
             d.source
           when SubIR
             d.src.source

@@ -136,7 +136,9 @@ module CastOff::Compiler
       end
 
       def to_s()
-        "(#{@labels.join(", ")})BB#{@number}"
+        pstr = "#{@pre.map{|b|  "BB#{b.number}"}.join(", ")}"
+        nstr = "#{@next.map{|b| "BB#{b.number}"}.join(", ")}"
+        "(#{pstr})BB#{@number}-#{@iseq}(#{nstr})"
       end
     end
   end
