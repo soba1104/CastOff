@@ -142,7 +142,6 @@ Show compilation progress and internal information.
 
 --deoptimize
 Enable deoptimization.
-(Currently, CastOff does not support deoptimization of methods which use block.)
 
 --clear
 Clear profile information and delete compiled methods.
