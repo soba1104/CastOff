@@ -14,6 +14,8 @@ module CastOff
 
       CastOffDir = "#{ENV["HOME"]}/.CastOff"
       FileUtils.mkdir(CastOffDir) unless File.exist?(CastOffDir)
+      BaseDir = "#{CastOffDir}/#{File.expand_path(__FILE__).gsub(/\.|\/|-|:/, "_")}"
+      FileUtils.mkdir(BaseDir) unless File.exist?(BaseDir)
 
       @@program_name = File.expand_path($PROGRAM_NAME)
       CastOff::Compiler.class_eval do
@@ -23,7 +25,7 @@ module CastOff
       end
 
       def self.program_dir()
-        dir = "#{CastOffDir}/#{@@program_name.gsub(/\.|\/|-|:/, "_")}"
+        dir = "#{BaseDir}/#{@@program_name.gsub(/\.|\/|-|:/, "_")}"
         FileUtils.mkdir(dir) unless File.exist?(dir)
         dir
       end
