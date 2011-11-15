@@ -1106,6 +1106,14 @@ If you want to use these variables, use CastOff.allow_builtin_variable_incompati
     #{@return_value} = Qnil;
   }
           EOS
+        when DEFINED_CONST
+          ret << <<-EOS
+  if (cast_off_const_defined(#{val}, #{@id})) {
+    #{@return_value} = #{@needstr ? 'rb_str_new2("constant")' : 'Qtrue'};
+  } else {
+    #{@return_value} = Qnil;
+  }
+          EOS
         else
           bug()
         end
@@ -1405,7 +1413,8 @@ Call site is (#{@insn}).
 %bug() unless param.size > 0
   {
     int argc = <%= @argc - 1 %>;
-    VALUE argv[<%= SPLATCALL_LIMIT %>]; /* FIXME */
+    VALUE buf[<%= SPLATCALL_LIMIT %>]; /* FIXME */
+    VALUE *argv = buf;
 %splat_param  = param.last()
 %normal_param = param.slice(0, param.size() - 1)
     VALUE ary = <%= splat_param %>;
@@ -1432,7 +1441,11 @@ Call site is (#{@insn}).
       ptr = RARRAY_PTR(tmp);
       argc += len;
       if (UNLIKELY(argc > <%= SPLATCALL_LIMIT %>)) {
-        rb_raise(rb_eCastOffExecutionError, "Too large array(limit = <%= SPLATCALL_LIMIT %>)");
+        VALUE *newbuf = ALLOCA_N(VALUE, argc);
+%normal_param.size.times do |i|
+        newbuf[i] = argv[i];
+%end
+        argv = newbuf;
       }
       for (i = 0; i < len; i++) {
         argv[<%= normal_param.size %> + i] = ptr[i];
@@ -1615,7 +1628,8 @@ You should not use #{@method_id} method in compilation target of CastOff.
 %bug() unless param.size > 0
   {
     int argc = <%= argc - 2 %>;
-    VALUE argv[<%= SPLATCALL_LIMIT %>];
+    VALUE buf[<%= SPLATCALL_LIMIT %>];
+    VALUE *argv = buf;
 %splat_param  = param.last()
 %normal_param = param.slice(0, param.size() - 1)
     VALUE ary = <%= splat_param %>;
@@ -1642,7 +1656,11 @@ You should not use #{@method_id} method in compilation target of CastOff.
       ptr = RARRAY_PTR(tmp);
       argc += len;
       if (UNLIKELY(argc > <%= SPLATCALL_LIMIT %>)) {
-        rb_raise(rb_eCastOffExecutionError, "Too large array(limit = <%= SPLATCALL_LIMIT %>)");
+        VALUE *newbuf = ALLOCA_N(VALUE, argc);
+%normal_param.size.times do |i|
+        newbuf[i] = argv[i];
+%end
+        argv = newbuf;
       }
       for (i = 0; i < len; i++) {
         argv[<%= normal_param.size %> + i] = ptr[i];

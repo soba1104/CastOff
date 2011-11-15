@@ -2157,19 +2157,24 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
       [Float, :phase, :class],
     ]
     DIRECT_CALL_TARGETS.map! do |(obj, mid, t)|
-      case t
-      when :class
-        bug() unless obj.instance_of?(Class)
-        MethodWrapper.new(ClassWrapper.new(obj, true), mid)
-      when :module
-        bug() unless obj.instance_of?(Module)
-        MethodWrapper.new(ModuleWrapper.new(obj), mid)
-      when :singleton
-        MethodWrapper.new(ClassWrapper.new(obj, false), mid)
-      else
-        bug()
+      begin
+        case t
+        when :class
+          bug() unless obj.instance_of?(Class)
+          MethodWrapper.new(ClassWrapper.new(obj, true), mid)
+        when :module
+          bug() unless obj.instance_of?(Module)
+          MethodWrapper.new(ModuleWrapper.new(obj), mid)
+        when :singleton
+          MethodWrapper.new(ClassWrapper.new(obj, false), mid)
+        else
+          bug()
+        end
+      rescue CompileError # method not found
+        vlog("method not found #{obj} #{mid}")
       end
     end
+    DIRECT_CALL_TARGETS.compact!
 
     def should_be_call_directly?(klass, mid)
       bug() unless klass.is_a?(ClassWrapper)

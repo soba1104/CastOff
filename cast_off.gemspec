@@ -20,6 +20,6 @@ CastOff is a performance improvement tool for Ruby1.9.3
   spec.email		      = 'shiba@rvm.jp'
   spec.homepage		      = 'http://github.com/soba1104/CastOff'
   #spec.rubyforge_project     = 'cast_off'
-  spec.required_ruby_version  = '= 1.9.3'
+  spec.required_ruby_version  = '>= 1.9.2'
 end
 

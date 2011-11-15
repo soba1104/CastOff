@@ -13,17 +13,6 @@ module CastOff::Compiler
     VM_CALL_SUPER_BIT          = (0x01 << 7)
     VM_CALL_OPT_SEND_BIT       = (0x01 << 8)
 
-    DEFINED_IVAR    = 1
-    DEFINED_IVAR2   = 2
-    DEFINED_GVAR    = 3
-    DEFINED_CVAR    = 4
-    DEFINED_CONST   = 5
-    DEFINED_METHOD  = 6
-    DEFINED_YIELD   = 7
-    DEFINED_REF     = 8
-    DEFINED_ZSUPER  = 9
-    DEFINED_FUNC    = 10
-
     SupportInstruction = [
       :trace, :nop, :putnil, :getdynamic, :send, :leave, :putobject, :putself, :putstring, :newrange,
       :newarray, :duparray, :tostring, :concatstrings, :setdynamic, :newhash, :branchunless, :branchif, :toregexp,

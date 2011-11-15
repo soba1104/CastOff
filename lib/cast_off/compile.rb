@@ -36,14 +36,18 @@ module CastOff
       # Marshal.load で定数を参照したときに、クラス定義が走る可能性があるので、
       # @@autoload_proc を定義する前に、Marshal.load を呼び出しておく。
       compiled = CodeManager.load_autocompiled()
+      t = Time.now
+      count = 0
       @@autoload_proc = lambda {
         compiled = CodeManager.load_autocompiled() unless compiled
+        count += 1 unless compiled
         return false unless compiled
+        STDERR.puts("time = #{Time.now - t}, count = #{count}")
         fin = __load(compiled)
         hook_class_definition_end(nil) if fin
         fin
       }
-      hook_class_definition_end(@@autoload_proc)
+      hook_class_definition_end(@@autoload_proc) if RUBY_VERSION == "1.9.3"
       @@autoload_proc.call()
       true
     end
@@ -63,7 +67,15 @@ module CastOff
     end
 
     @@autocompile_proc = nil
-    @@compile_auto_incremental = true
+    case RUBY_VERSION
+    when "1.9.3"
+      @@compile_auto_incremental = true
+    when "1.9.2"
+      @@compile_auto_incremental = false
+    else
+      bug()
+    end
+
     def autocompile()
       return false if autoload_running?
       return true if autocompile_running?
@@ -147,24 +159,26 @@ module CastOff
     end
 
     def compile(target, mid, bind_or_typemap = nil, typemap = nil)
-      case target
-      when Class, Module
-        # ok
-      else
-        raise(ArgumentError.new("first argument should be Class or Module"))
+      execute_no_hook() do
+        case target
+        when Class, Module
+          # ok
+        else
+          raise(ArgumentError.new("first argument should be Class or Module"))
+        end
+        mid, bind, typemap = parse_arguments(mid, bind_or_typemap, typemap)
+        t = override_target(target, mid)
+        iseq = @@original_instance_method_iseq[[t, mid]] || get_iseq(target, mid, false)
+        manager, configuration, suggestion = compile_iseq(iseq, mid, typemap, false, bind)
+        manager.compilation_target_is_a(t, mid, false)
+        set_direct_call(target, mid, target.instance_of?(Class) ? :class : :module, manager, configuration)
+        load_binary(manager, configuration, suggestion, iseq, bind)
+        t = override_target(target, mid)
+        dlog("override target of #{target}##{mid} is #{t}")
+        __send__("register_method_#{manager.signiture}", t)
+        @@original_instance_method_iseq[[t, mid]] = iseq
+        @@manager_table[manager.signiture] = manager
       end
-      mid, bind, typemap = parse_arguments(mid, bind_or_typemap, typemap)
-      t = override_target(target, mid)
-      iseq = @@original_instance_method_iseq[[t, mid]] || get_iseq(target, mid, false)
-      manager, configuration, suggestion = compile_iseq(iseq, mid, typemap, false, bind)
-      manager.compilation_target_is_a(t, mid, false)
-      set_direct_call(target, mid, target.instance_of?(Class) ? :class : :module, manager, configuration)
-      load_binary(manager, configuration, suggestion, iseq, bind)
-      t = override_target(target, mid)
-      dlog("override target of #{target}##{mid} is #{t}")
-      __send__("register_method_#{manager.signiture}", t)
-      @@original_instance_method_iseq[[t, mid]] = iseq
-      @@manager_table[manager.signiture] = manager
       true
     end
 
@@ -174,15 +188,17 @@ module CastOff
     end
 
     def compile_singleton_method(obj, mid, bind_or_typemap = nil, typemap = nil)
-      mid, bind, typemap = parse_arguments(mid, bind_or_typemap, typemap)
-      iseq = @@original_singleton_method_iseq[[obj, mid]] || get_iseq(obj, mid, true)
-      manager, configuration, suggestion = compile_iseq(iseq, mid, typemap, false, bind)
-      manager.compilation_target_is_a(obj, mid, true)
-      set_direct_call(obj, mid, :singleton, manager, configuration)
-      load_binary(manager, configuration, suggestion, iseq, bind)
-      __send__("register_singleton_method_#{manager.signiture}", obj)
-      @@original_singleton_method_iseq[[obj, mid]] = iseq
-      @@manager_table[manager.signiture] = manager
+      execute_no_hook() do
+        mid, bind, typemap = parse_arguments(mid, bind_or_typemap, typemap)
+        iseq = @@original_singleton_method_iseq[[obj, mid]] || get_iseq(obj, mid, true)
+        manager, configuration, suggestion = compile_iseq(iseq, mid, typemap, false, bind)
+        manager.compilation_target_is_a(obj, mid, true)
+        set_direct_call(obj, mid, :singleton, manager, configuration)
+        load_binary(manager, configuration, suggestion, iseq, bind)
+        __send__("register_singleton_method_#{manager.signiture}", obj)
+        @@original_singleton_method_iseq[[obj, mid]] = iseq
+        @@manager_table[manager.signiture] = manager
+      end
       true
     end
 
@@ -192,10 +208,12 @@ module CastOff
       iseq = get_iseq_from_block(block)
       key = iseq.__id__
       if !@@loaded_binary[key]
-        bind = block.binding
-        manager, configuration, suggestion = compile_iseq(iseq, nil, typemap, false, bind)
-        load_binary(manager, configuration, suggestion, iseq, bind)
-        @@loaded_binary[key] = manager.signiture
+        execute_no_hook() do
+          bind = block.binding
+          manager, configuration, suggestion = compile_iseq(iseq, nil, typemap, false, bind)
+          load_binary(manager, configuration, suggestion, iseq, bind)
+          @@loaded_binary[key] = manager.signiture
+        end
       end
       sign = @@loaded_binary[key]
       recv = get_caller()
@@ -252,9 +270,7 @@ Currently, CastOff cannot compile method which source file is not exist.
       suggestion = Suggestion.new(iseq, @@suggestion_io)
       configuration = nil
       manager.do_atomically() do
-        execute_no_hook() do
-          configuration = __compile(iseq, manager, typemap || {}, mid, is_proc, bind, suggestion)
-        end
+        configuration = __compile(iseq, manager, typemap || {}, mid, is_proc, bind, suggestion)
       end
       bug() unless configuration.instance_of?(Configuration)
       [manager, configuration, suggestion]
@@ -424,6 +440,10 @@ Currently, CastOff cannot compile method which source file is not exist.
                 CastOff.compile(klass, mid, bind)
               end
               vlog("load #{klass}##{mid}")
+            rescue ArgumentError => e
+              # dependency の Marshal.load に失敗
+              vlog("skip: entry = #{entry[0]}#{entry[2] ? '.' : '#'}#{entry[1]}, #{e}")
+              CodeManager.delete_from_compiled(entry)
             rescue UnsupportedError => e
               vlog("unsupported #{klass}##{mid} => #{e}")
               CodeManager.delete_from_compiled(entry)
@@ -445,10 +465,14 @@ Currently, CastOff cannot compile method which source file is not exist.
       end
     end
 
-    BasicObject.class_eval do
-      def self.method_added(mid)
-        if CastOff.autoload_running? && !@@skipped.empty? && !CastOff.compiler_running?
-          @@autoload_proc.call()
+    s = class << BasicObject
+      self
+    end
+    continue_load = RUBY_VERSION != "1.9.3"
+    s.class_eval do
+      define_method(:method_added) do |mid|
+        if CastOff.autoload_running? && (!@@skipped.empty? || continue_load) && !CastOff.compiler_running?
+          continue_load &= !@@autoload_proc.call()
         end
       end
     end
@@ -560,7 +584,7 @@ Currently, CastOff cannot compile method which source file is not exist.
       unless base_configuration
         last = manager.load_last_configuration()
         bind = last ? (last.bind ? last.bind.bind : nil) : nil
-               base_configuration = Configuration.new({}, bind)
+        base_configuration = Configuration.new({}, bind)
       end
       bug() unless base_configuration.instance_of?(Configuration)
       update_p = update_configuration(base_configuration, reciever_result, return_value_result)
@@ -635,20 +659,18 @@ Currently, CastOff cannot compile method which source file is not exist.
     end
 
     def load_binary(manager, configuration, suggestion, iseq, bind)
-      execute_no_hook() do
-        so = manager.compiled_binary
-        sign = manager.signiture
-        bug("#{so} is not exist") unless File.exist?(so)
-        load_compiled_file(so)
-        function_pointer_initializer = "initialize_fptr_#{sign}".intern
-        hook_method_override(manager, configuration, function_pointer_initializer)
-        __send__("register_iseq_#{sign}", iseq)
-        __send__("register_ifunc_#{sign}")
-        set_sampling_table(suggestion, manager, configuration)
-        suggestion.dump_at_exit()
-        __send__(function_pointer_initializer)
-        __send__("prefetch_constants_#{sign}", bind) if bind
-      end
+      so = manager.compiled_binary
+      sign = manager.signiture
+      bug("#{so} is not exist") unless File.exist?(so)
+      load_compiled_file(so)
+      function_pointer_initializer = "initialize_fptr_#{sign}".intern
+      hook_method_override(manager, configuration, function_pointer_initializer)
+      __send__("register_iseq_#{sign}", iseq)
+      __send__("register_ifunc_#{sign}")
+      set_sampling_table(suggestion, manager, configuration)
+      suggestion.dump_at_exit()
+      __send__(function_pointer_initializer)
+      __send__("prefetch_constants_#{sign}", bind) if bind
     end
 
     def capture_instruction()

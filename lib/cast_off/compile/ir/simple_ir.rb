@@ -543,14 +543,12 @@ Call site is (#{insn}).
         when :defined
           t = argv[0]
           case t
-          when DEFINED_IVAR, DEFINED_GVAR, DEFINED_FUNC
+          when DEFINED_IVAR, DEFINED_GVAR, DEFINED_FUNC, DEFINED_CONST
             # ok
           when DEFINED_IVAR2
             bug("unexpected defined instruction")
           when DEFINED_CVAR
             raise(UnsupportedError.new("Currently, CastOff cannot handle defined instruction for class variable"))
-          when DEFINED_CONST
-            raise(UnsupportedError.new("Currently, CastOff cannot handle defined instruction for constant"))
           when DEFINED_METHOD
             raise(UnsupportedError.new("Currently, CastOff cannot handle defined instruction for methods"))
           when DEFINED_YIELD

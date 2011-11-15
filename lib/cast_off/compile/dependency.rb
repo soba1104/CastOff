@@ -216,6 +216,8 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
                 override_method(o, mid, :added)
                 method_added.call(mid) if method_added
               end
+            elsif o == BasicObject && method_added && !Dependency.singleton_method_added?
+              method_added.call(mid)
             end
             super(mid) rescue NoMethodError
           end

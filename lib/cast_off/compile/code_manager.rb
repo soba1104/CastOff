@@ -43,14 +43,27 @@ module CastOff
         return true
       end
 
+      @@compiled_methods_fetch_str = nil
+      @@compiled_methods_load_str  = nil
       def self.load_autocompiled()
         begin
           dir = program_dir()
-          path = "#{dir}/auto_compiled.dump"
+          # fetch classes
+          path = "#{dir}/.compiled_methods"
           return nil unless File.exist?(path)
-          str = File.open(path, 'rb:us-ascii').read()
-          str.untaint # FIXME
-          Marshal.load(str)
+          if !@@compiled_methods_fetch_str
+            @@compiled_methods_fetch_str = File.open(path, 'rb:us-ascii').read() 
+            @@compiled_methods_fetch_str.untaint # FIXME
+          end
+          Marshal.load(@@compiled_methods_fetch_str)
+          # load compiled methods information
+          path = "#{dir}/compiled_methods"
+          return nil unless File.exist?(path)
+          if !@@compiled_methods_load_str
+            @@compiled_methods_load_str = File.open(path, 'rb:us-ascii').read() 
+            @@compiled_methods_load_str.untaint # FIXME
+          end
+          Marshal.load(@@compiled_methods_load_str)
         rescue ArgumentError, NameError
           false
         end
@@ -58,10 +71,16 @@ module CastOff
 
       def self.dump_auto_compiled(compiled)
         dir = program_dir()
-        path = "#{dir}/auto_compiled.dump"
+        path = "#{dir}/.compiled_methods"
+        File.open("#{path}", 'wb:us-ascii') do |f|
+          Marshal.dump(compiled.map{|c| c.first}, f) # dump only classes
+        end
+        @@compiled_methods_fetch_str = nil
+        path = "#{dir}/compiled_methods"
         File.open("#{path}", 'wb:us-ascii') do |f|
           Marshal.dump(compiled, f)
         end
+        @@compiled_methods_load_str = nil
         load_autocompiled()
       end
 

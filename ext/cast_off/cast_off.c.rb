@@ -1,8 +1,8 @@
 #if 1
 #define __END__ /* void */
 #else
-ruby_srcdir = ARGV[0];
-generated_c_include = ARGV[1];
+ruby_srcdir = ARGV[0].dup;
+generated_c_include = ARGV[1].dup;
 srcdir = File.dirname(__FILE__)
 require("erb");
 require('rbconfig');
@@ -12,7 +12,40 @@ ERB.new(DATA.read(), 0, "%-").run();
 #endif
 __END__
 
-#include <cast_off.h>
+% case RUBY_VERSION
+% when "1.9.2"
+%   ruby_srcdir_prefix = "1.9.2"
+% when "1.9.3"
+%   ruby_srcdir_prefix = "1.9.3"
+% else
+%   raise("Unsupported ruby version #{RUBY_VERSION}")
+% end
+% ruby_srcdir.concat("/#{ruby_srcdir_prefix}")
+
+#include <ruby.h>
+
+#include "<%= ruby_srcdir_prefix %>/vm_core.h"
+#include "<%= ruby_srcdir_prefix %>/eval_intern.h"
+#include "<%= ruby_srcdir_prefix %>/iseq.h"
+#include "<%= ruby_srcdir_prefix %>/gc.h"
+#include <ruby/vm.h>
+#include <ruby/encoding.h>
+#include "<%= ruby_srcdir_prefix %>/vm_insnhelper.h"
+#include "<%= ruby_srcdir_prefix %>/vm_insnhelper.c"
+#include "<%= ruby_srcdir_prefix %>/vm_exec.h"
+
+#ifdef  USE_INSN_STACK_INCREASE
+#undef  USE_INSN_STACK_INCREASE
+#endif
+#define USE_INSN_STACK_INCREASE 1
+
+#ifdef USE_INSN_RET_NUM
+#undef USE_INSN_RET_NUM
+#endif
+#define USE_INSN_RET_NUM 1
+
+#include "<%= ruby_srcdir_prefix %>/insns_info.inc"
+#include "<%= ruby_srcdir_prefix %>/manual_update.h"
 
 VALUE rb_eCastOffCompileError;
 VALUE rb_eCastOffExecutionError;
@@ -49,10 +82,8 @@ gen_headers(void)
 %  vm_opts.h
 %  insns_info.inc
 %  insns.inc
-%  atomic.h
-%  internal.h
 %  manual_update.h
-% ].map{|f| [ruby_srcdir, f ]} + %w[
+% ].map{|f| [ruby_srcdir, f]} + %w[
 %  iter_api.h
 %  vm_api.h
 %  inline_api.h
@@ -61,10 +92,12 @@ gen_headers(void)
 % case RUBY_VERSION
 % when "1.9.2"
 %   # nothing to do
-% when "1.9.3", "1.9.4"
+% when "1.9.3"
 %   files << [ruby_srcdir, "constant.h"]
+%   files << [ruby_srcdir, "atomic.h"]
+%   files << [ruby_srcdir, "internal.h"]
 % else
-%   raise("unsupported ruby version #{RUBY_VERSION}")
+%   raise("Unsupported ruby version #{RUBY_VERSION}")
 % end
 %data = Marshal.dump files.inject({}){|r, i|
 %  dir, file = i
@@ -1370,6 +1403,17 @@ void Init_cast_off(void)
   rb_define_const(rb_mCastOffCompilerInstruction, "THROW_TAG_RAISE", LONG2FIX(TAG_RAISE));
   rb_define_const(rb_mCastOffCompilerInstruction, "THROW_TAG_THROW", LONG2FIX(TAG_THROW));
   rb_define_const(rb_mCastOffCompilerInstruction, "THROW_TAG_FATAL", LONG2FIX(TAG_FATAL));
+  rb_define_const(rb_mCastOffCompilerInstruction, "DEFINED_IVAR",   LONG2FIX(DEFINED_IVAR));
+  rb_define_const(rb_mCastOffCompilerInstruction, "DEFINED_IVAR2",  LONG2FIX(DEFINED_IVAR2));
+  rb_define_const(rb_mCastOffCompilerInstruction, "DEFINED_GVAR",   LONG2FIX(DEFINED_GVAR));
+  rb_define_const(rb_mCastOffCompilerInstruction, "DEFINED_CVAR",   LONG2FIX(DEFINED_CVAR));
+  rb_define_const(rb_mCastOffCompilerInstruction, "DEFINED_CONST",  LONG2FIX(DEFINED_CONST));
+  rb_define_const(rb_mCastOffCompilerInstruction, "DEFINED_METHOD", LONG2FIX(DEFINED_METHOD));
+  rb_define_const(rb_mCastOffCompilerInstruction, "DEFINED_YIELD",  LONG2FIX(DEFINED_YIELD));
+  rb_define_const(rb_mCastOffCompilerInstruction, "DEFINED_REF",    LONG2FIX(DEFINED_REF));
+  rb_define_const(rb_mCastOffCompilerInstruction, "DEFINED_ZSUPER", LONG2FIX(DEFINED_ZSUPER));
+  rb_define_const(rb_mCastOffCompilerInstruction, "DEFINED_FUNC",   LONG2FIX(DEFINED_FUNC));
+
   rb_define_method(rb_cCastOffInsnInfo, "instruction_pushnum", cast_off_instruction_pushnum, 1);
   rb_define_method(rb_cCastOffInsnInfo, "instruction_popnum", cast_off_instruction_popnum, 1);
   rb_define_method(rb_cCastOffInsnInfo, "instruction_stack_usage", cast_off_instruction_stack_usage, 1);

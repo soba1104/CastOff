@@ -4,33 +4,49 @@ $(srcdir)/generated_c_include/unbox_api.h:	\
 
 
 cast_off.c:					\
-  $(srcdir)/ruby_source/debug.h			\
-  $(srcdir)/ruby_source/gc.h			\
-  $(srcdir)/ruby_source/id.h			\
-  $(srcdir)/ruby_source/eval_intern.h		\
-  $(srcdir)/ruby_source/iseq.h			\
-  $(srcdir)/ruby_source/method.h		\
-  $(srcdir)/ruby_source/node.h			\
-  $(srcdir)/ruby_source/thread_pthread.h	\
-  $(srcdir)/ruby_source/thread_win32.h		\
-  $(srcdir)/ruby_source/vm_core.h		\
-  $(srcdir)/ruby_source/vm_exec.h		\
-  $(srcdir)/ruby_source/vm_insnhelper.c		\
-  $(srcdir)/ruby_source/vm_insnhelper.h		\
-  $(srcdir)/ruby_source/vm_opts.h		\
-  $(srcdir)/ruby_source/insns_info.inc		\
-  $(srcdir)/ruby_source/insns.inc		\
-  $(srcdir)/ruby_source/constant.h		\
-  $(srcdir)/ruby_source/atomic.h		\
-  $(srcdir)/ruby_source/internal.h		\
-  $(srcdir)/ruby_source/manual_update.h		\
+  $(srcdir)/ruby_source/1.9.3/debug.h		\
+  $(srcdir)/ruby_source/1.9.3/gc.h		\
+  $(srcdir)/ruby_source/1.9.3/id.h		\
+  $(srcdir)/ruby_source/1.9.3/eval_intern.h	\
+  $(srcdir)/ruby_source/1.9.3/iseq.h		\
+  $(srcdir)/ruby_source/1.9.3/method.h		\
+  $(srcdir)/ruby_source/1.9.3/node.h		\
+  $(srcdir)/ruby_source/1.9.3/thread_pthread.h	\
+  $(srcdir)/ruby_source/1.9.3/thread_win32.h	\
+  $(srcdir)/ruby_source/1.9.3/vm_core.h		\
+  $(srcdir)/ruby_source/1.9.3/vm_exec.h		\
+  $(srcdir)/ruby_source/1.9.3/vm_insnhelper.c	\
+  $(srcdir)/ruby_source/1.9.3/vm_insnhelper.h	\
+  $(srcdir)/ruby_source/1.9.3/vm_opts.h		\
+  $(srcdir)/ruby_source/1.9.3/insns_info.inc	\
+  $(srcdir)/ruby_source/1.9.3/insns.inc		\
+  $(srcdir)/ruby_source/1.9.3/constant.h	\
+  $(srcdir)/ruby_source/1.9.3/atomic.h		\
+  $(srcdir)/ruby_source/1.9.3/internal.h	\
+  $(srcdir)/ruby_source/1.9.3/manual_update.h	\
+  $(srcdir)/ruby_source/1.9.2/debug.h		\
+  $(srcdir)/ruby_source/1.9.2/gc.h		\
+  $(srcdir)/ruby_source/1.9.2/id.h		\
+  $(srcdir)/ruby_source/1.9.2/eval_intern.h	\
+  $(srcdir)/ruby_source/1.9.2/iseq.h		\
+  $(srcdir)/ruby_source/1.9.2/method.h		\
+  $(srcdir)/ruby_source/1.9.2/node.h		\
+  $(srcdir)/ruby_source/1.9.2/thread_pthread.h	\
+  $(srcdir)/ruby_source/1.9.2/thread_win32.h	\
+  $(srcdir)/ruby_source/1.9.2/vm_core.h		\
+  $(srcdir)/ruby_source/1.9.2/vm_exec.h		\
+  $(srcdir)/ruby_source/1.9.2/vm_insnhelper.c	\
+  $(srcdir)/ruby_source/1.9.2/vm_insnhelper.h	\
+  $(srcdir)/ruby_source/1.9.2/vm_opts.h		\
+  $(srcdir)/ruby_source/1.9.2/insns_info.inc	\
+  $(srcdir)/ruby_source/1.9.2/insns.inc		\
+  $(srcdir)/ruby_source/1.9.2/manual_update.h	\
   $(srcdir)/generated_c_include/iter_api.h	\
   $(srcdir)/generated_c_include/vm_api.h	\
   $(srcdir)/generated_c_include/inline_api.h	\
   $(srcdir)/generated_c_include/unbox_api.h	\
   $(srcdir)/generated_c_include/unbox_api.h.rb	\
   $(srcdir)/extconf.h				\
-  $(srcdir)/cast_off.h				\
   $(srcdir)/cast_off.c.rb
 	$(RUBY) -- $(srcdir)/cast_off.c.rb $(srcdir)/ruby_source $(srcdir)/generated_c_include > $@
 
@@ -42,29 +58,42 @@ cast_off.o:					\
   $(hdrdir)/ruby/missing.h			\
   $(hdrdir)/ruby/ruby.h				\
   $(hdrdir)/ruby/st.h				\
-  $(srcdir)/ruby_source/eval_intern.h		\
-  $(srcdir)/ruby_source/iseq.h			\
-  $(srcdir)/ruby_source/method.h		\
-  $(srcdir)/ruby_source/node.h			\
-  $(srcdir)/ruby_source/thread_pthread.h	\
-  $(srcdir)/ruby_source/thread_win32.h		\
-  $(srcdir)/ruby_source/vm_core.h		\
-  $(srcdir)/ruby_source/vm_exec.h		\
-  $(srcdir)/ruby_source/vm_insnhelper.c		\
-  $(srcdir)/ruby_source/vm_insnhelper.h		\
-  $(srcdir)/ruby_source/vm_opts.h		\
-  $(srcdir)/ruby_source/insns_info.inc		\
-  $(srcdir)/ruby_source/insns.inc		\
-  $(srcdir)/ruby_source/constant.h		\
-  $(srcdir)/ruby_source/atomic.h		\
-  $(srcdir)/ruby_source/internal.h		\
-  $(srcdir)/ruby_source/manual_update.h		\
+  $(srcdir)/ruby_source/1.9.3/eval_intern.h	\
+  $(srcdir)/ruby_source/1.9.3/iseq.h		\
+  $(srcdir)/ruby_source/1.9.3/method.h		\
+  $(srcdir)/ruby_source/1.9.3/node.h		\
+  $(srcdir)/ruby_source/1.9.3/thread_pthread.h	\
+  $(srcdir)/ruby_source/1.9.3/thread_win32.h	\
+  $(srcdir)/ruby_source/1.9.3/vm_core.h		\
+  $(srcdir)/ruby_source/1.9.3/vm_exec.h		\
+  $(srcdir)/ruby_source/1.9.3/vm_insnhelper.c	\
+  $(srcdir)/ruby_source/1.9.3/vm_insnhelper.h	\
+  $(srcdir)/ruby_source/1.9.3/vm_opts.h		\
+  $(srcdir)/ruby_source/1.9.3/insns_info.inc	\
+  $(srcdir)/ruby_source/1.9.3/insns.inc		\
+  $(srcdir)/ruby_source/1.9.3/constant.h	\
+  $(srcdir)/ruby_source/1.9.3/atomic.h		\
+  $(srcdir)/ruby_source/1.9.3/internal.h	\
+  $(srcdir)/ruby_source/1.9.3/manual_update.h	\
+  $(srcdir)/ruby_source/1.9.2/eval_intern.h	\
+  $(srcdir)/ruby_source/1.9.2/iseq.h		\
+  $(srcdir)/ruby_source/1.9.2/method.h		\
+  $(srcdir)/ruby_source/1.9.2/node.h		\
+  $(srcdir)/ruby_source/1.9.2/thread_pthread.h	\
+  $(srcdir)/ruby_source/1.9.2/thread_win32.h	\
+  $(srcdir)/ruby_source/1.9.2/vm_core.h		\
+  $(srcdir)/ruby_source/1.9.2/vm_exec.h		\
+  $(srcdir)/ruby_source/1.9.2/vm_insnhelper.c	\
+  $(srcdir)/ruby_source/1.9.2/vm_insnhelper.h	\
+  $(srcdir)/ruby_source/1.9.2/vm_opts.h		\
+  $(srcdir)/ruby_source/1.9.2/insns_info.inc	\
+  $(srcdir)/ruby_source/1.9.2/insns.inc		\
+  $(srcdir)/ruby_source/1.9.2/manual_update.h	\
   $(srcdir)/generated_c_include/iter_api.h	\
   $(srcdir)/generated_c_include/vm_api.h	\
   $(srcdir)/generated_c_include/inline_api.h	\
   $(srcdir)/generated_c_include/unbox_api.h	\
   $(srcdir)/generated_c_include/unbox_api.h.rb	\
   $(srcdir)/extconf.h				\
-  $(srcdir)/cast_off.h				\
   $(srcdir)/cast_off.c
 

@@ -580,11 +580,13 @@ static int should_be_call_directly_p(VALUE (*fptr)(ANYARGS))
 }
 NOINLINE(static int should_be_call_directly_p(VALUE (*fptr)(ANYARGS)));
 
-#define cast_off_get_constant(klass, id)  cast_off_get_ev_const(self, cast_off_orig_iseq->cref_stack, (klass), (id))
+#define cast_off_const_defined(klass, id) cast_off_get_ev_const(self, cast_off_orig_iseq->cref_stack, (klass), (id), 1)
+#define cast_off_get_constant(klass, id)  cast_off_get_ev_const(self, cast_off_orig_iseq->cref_stack, (klass), (id), 0)
 #define cast_off_get_cvar_base()          vm_get_cvar_base(cast_off_orig_iseq->cref_stack)
 
+#if defined(RUBY_1_9_3)
 static VALUE
-cast_off_get_ev_const(VALUE self, NODE *root_cref, VALUE orig_klass, ID id)
+cast_off_get_ev_const(VALUE self, NODE *root_cref, VALUE orig_klass, ID id, int is_defined)
 {
   VALUE val;
 
@@ -615,10 +617,15 @@ search_continue:
           if (val == Qundef) {
             if (am == klass) break;
             am = klass;
+            if (is_defined) return 1;
             rb_autoload_load(klass, id);
             goto search_continue;
           } else {
-            return val;
+            if (is_defined) {
+              return 1;
+            } else {
+              return val;
+            }
           }
         }
       }
@@ -630,14 +637,90 @@ search_continue:
     } else {
         klass = CLASS_OF(self);
     }
-    return rb_const_get(klass, id);
+    if (is_defined) {
+      return rb_const_defined(klass, id);
+    } else {
+      return rb_const_get(klass, id);
+    }
   } else {
     vm_check_if_namespace(orig_klass);
-    return rb_const_get(orig_klass, id); /* FIXME */
-    /* return rb_public_const_get_from(orig_klass, id); */
+    if (is_defined) {
+      return rb_const_defined(orig_klass, id); /* FIXME */
+      /* return rb_public_const_defined_from(orig_klass, id); */
+    } else {
+      return rb_const_get(orig_klass, id); /* FIXME */
+      /* return rb_public_const_get_from(orig_klass, id); */
+    }
   }
 }
-NOINLINE(static VALUE cast_off_get_ev_const(VALUE self, NODE *root_cref, VALUE orig_klass, ID id));
+NOINLINE(static VALUE cast_off_get_ev_const(VALUE self, NODE *root_cref, VALUE orig_klass, ID id, int is_defined));
+#elif defined(RUBY_1_9_2)
+static VALUE
+cast_off_get_ev_const(VALUE self, NODE *cref, VALUE orig_klass, ID id, int is_defined)
+{
+  VALUE val;
+
+  if (orig_klass == Qnil) {
+    /* in current lexical scope */
+    const NODE *root_cref = NULL;
+    VALUE klass = orig_klass;
+
+    while (cref && cref->nd_next) {
+      if (!(cref->flags & NODE_FL_CREF_PUSHED_BY_EVAL)) {
+        klass = cref->nd_clss;
+        if (root_cref == NULL)
+          root_cref = cref;
+      }
+      cref = cref->nd_next;
+
+      if (!NIL_P(klass)) {
+        VALUE am = 0;
+search_continue:
+        if (RCLASS_IV_TBL(klass) &&
+            st_lookup(RCLASS_IV_TBL(klass), id, &val)) {
+          if (val == Qundef) {
+            if (am == klass) break;
+            am = klass;
+            rb_autoload_load(klass, id);
+            goto search_continue;
+          } else {
+            if (is_defined) {
+              return 1;
+            } else {
+              return val;
+            }
+          }
+        }
+      }
+    }
+
+    /* search self */
+    if (root_cref && !NIL_P(root_cref->nd_clss)) {
+      klass = root_cref->nd_clss;
+    } else {
+      VALUE thval = rb_thread_current();
+      rb_thread_t *th = DATA_PTR(thval);
+      klass = CLASS_OF(th->cfp->self);
+    }
+    if (is_defined) {
+      return rb_const_defined(klass, id);
+    } else {
+      return rb_const_get(klass, id);
+    }
+  }
+  else {
+    vm_check_if_namespace(orig_klass);
+    if (is_defined) {
+      return rb_const_defined(orig_klass, id); /* FIXME */
+      /* return rb_public_const_defined_from(orig_klass, id); */
+    } else {
+      return rb_const_get(orig_klass, id); /* FIXME */
+      /* return rb_const_get_from(orig_klass, id); */
+    }
+  }
+}
+NOINLINE(static VALUE cast_off_get_ev_const(VALUE self, NODE *cref, VALUE orig_klass, ID id, int is_defined));
+#endif
 
 #if 0
 /* should be mark cache->obj */

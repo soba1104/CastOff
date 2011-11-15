@@ -8,6 +8,15 @@ module CastOff
     include Converter
 
     Template = ERB.new(<<-'end', 0, '%-', 'io')
+%case RUBY_VERSION
+%when "1.9.3"
+#define RUBY_1_9_3 1
+%when "1.9.2"
+#define RUBY_1_9_2 1
+%else
+%  raise(UnsupportedError.new("Unsupported ruby version #{RUBY_VERSION}"))
+%end
+
 #include <ruby.h>
 #include <ruby/encoding.h>
 
