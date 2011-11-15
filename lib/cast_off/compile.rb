@@ -36,13 +36,9 @@ module CastOff
       # Marshal.load で定数を参照したときに、クラス定義が走る可能性があるので、
       # @@autoload_proc を定義する前に、Marshal.load を呼び出しておく。
       compiled = CodeManager.load_autocompiled()
-      t = Time.now
-      count = 0
       @@autoload_proc = lambda {
         compiled = CodeManager.load_autocompiled() unless compiled
-        count += 1 unless compiled
         return false unless compiled
-        STDERR.puts("time = #{Time.now - t}, count = #{count}")
         fin = __load(compiled)
         hook_class_definition_end(nil) if fin
         fin
@@ -341,7 +337,7 @@ Currently, CastOff cannot compile method which source file is not exist.
     class ReCompilation < StandardError; end
 
     def __compile(iseq, manager, annotation, mid, is_proc, bind, suggestion)
-      if reuse_compiled_binary? && !manager.target_file_updated?
+      if reuse_compiled_code? && !manager.target_file_updated?
         # already compiled
         if CastOff.development? || !CastOff.skip_configuration_check? || manager.last_configuration_enabled_development?
           conf = Configuration.new(annotation, bind)

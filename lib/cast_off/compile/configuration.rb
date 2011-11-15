@@ -2242,7 +2242,7 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
       :@@enable_inline_api                       => [true,  true,  false],
       :@@inject_guard                            => [true,  true,  false],
       :@@array_conservative                      => [true,  true,  false],
-      :@@reuse_compiled_binary                   => [true,  false, true],
+      :@@reuse_compiled_code                     => [true,  false, true],
       :@@allow_builtin_variable_incompatibility  => [false, true,  false],
       :@@prefetch_constant                       => [true,  true,  false],
       :@@deoptimize                              => [false, true,  false],
