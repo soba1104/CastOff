@@ -126,7 +126,7 @@ module CastOff
         @depfile = "#{@signiture}.mdep"
         @deppath = "#{@dstdir}/#{@depfile}"
         @conffile = "#{@signiture}.conf"
-        @base_configuration_path = "#{@dstdir}/#{@signiture}.base.conf"
+        @base_configuration_path = "#{@dstdir}/#{base_sign}.base.conf"
         @annotation_path = "#{@dstdir}/#{@signiture}.ann"
         @development_mark_file = "development"
         @development_mark_path = "#{@dstdir}/#{@development_mark_file}"

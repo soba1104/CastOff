@@ -328,8 +328,9 @@ Currently, CastOff cannot compile method which source file is not exist.
       manager.version_up()
       begin
         __send__(singleton ? 'compile_singleton_method' : 'compile', target, mid, ann)
+        vlog("re-compilation success: #{target}#{singleton ? '.' : '#'}#{mid}")
       rescue => e
-        vlog("re-compilation failed: #{target}#{singleton ? '.' : '#'}#{mid}")
+        vlog("re-compilation failed: #{target}#{singleton ? '.' : '#'}#{mid} => #{e}")
       end
       true
     end

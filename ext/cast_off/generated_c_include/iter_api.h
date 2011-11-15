@@ -61,7 +61,7 @@ static rb_iseq_t *construct_iter_api_iseq(VALUE (*fptr)(ANYARGS), ID mid)
 
   rb_ary_push(val, rb_str_new2("<compiled>")); /* name */
   rb_ary_push(val, rb_str_new2("<compiled>")); /* filename */
-  rb_ary_push(val, rb_str_new2("<compiled>")); /* filepath */
+  rb_ary_push(val, Qnil); /* filepath */
   rb_ary_push(val, INT2FIX(-1)); /* line_no */
   rb_ary_push(val, ID2SYM(rb_intern("method"))); /* type */
 
