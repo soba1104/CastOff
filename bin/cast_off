@@ -59,10 +59,10 @@ opt.on_tail('-h', "--help", "Show this help.") do
   ------------------------------------------
 
   1 Profile and compile fib.rb:
-  $cast_off --fib.rb 30 # 30 is a argument of fib.rb
+  $cast_off fib.rb 30 # 30 is a argument of fib.rb
 
   2 Run fib.rb with compiled codes:
-  $cast_off --run --fib.rb 30 # 30 is a argument of fib.rb
+  $cast_off --run fib.rb 30 # 30 is a argument of fib.rb
 
   Report bugs to <http://github.com/soba1104/CastOff/issues>.
   EOS
