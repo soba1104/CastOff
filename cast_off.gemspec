@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name		      = "cast_off"
-  spec.version		      = "0.2.2"
+  spec.version		      = "0.2.3"
   spec.platform		      = Gem::Platform::RUBY
   spec.summary		      = "Performance improvement tool for Ruby1.9.3"
   spec.description	      = <<-EOS
@@ -10,7 +10,7 @@ CastOff is a performance improvement tool for Ruby1.9.3
 				  cast_off.gemspec
 				]
   spec.bindir		      = 'bin'
-  spec.executables	      << 'CastOff'
+  spec.executables	      << 'cast_off'
   spec.require_path	      = 'lib'
   spec.extensions	      = 'ext/cast_off/extconf.rb'
   spec.has_rdoc		      = false

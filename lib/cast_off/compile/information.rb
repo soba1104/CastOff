@@ -6,40 +6,55 @@ module CastOff::Compiler
       include CastOff::Util
       include SimpleIR
 
-      attr_reader :variable_definition, :undefs, :block, :alias
-      attr_reader :variable_condition
+      attr_reader :definition, :undefs, :block, :alias
 
-      def initialize(block, vars, a, defs, undefs, ptr_defs, ptrs)
+      def initialize(block, vars, a, c, defs, undefs, ptr_defs, ptrs)
         @block = block
         @alias = a.instance_of?(Alias) ? a : Alias.new(@block, a, vars, ptrs)
-        @variable_definition = defs
+        @condition = c
+        @definition = defs
         @ptr_defs = ptr_defs
         @undefs = undefs
         @ptrs = ptrs
         @vars = vars
-        @variable_condition = VariableCondition.new(@block, @ptrs, @alias)
         check_initialize()
+      end
+
+      def initialize_condition()
+        @condition = Condition.new(@block, @ptrs, @alias)
+      end
+
+      def condition()
+        @condition
+      end
+
+      def condition=(cond)
+        bug() unless @condition
+        bug() unless cond.instance_of?(Condition)
+        @condition = cond
       end
 
       def freeze()
         super()
         check_initialize()
         @alias.freeze()
-        @variable_definition.freeze()
+        @definition.freeze()
         @ptr_defs.freeze()
         @undefs.freeze()
         @ptrs.freeze()
         @vars.freeze()
-        @variable_condition.freeze()
+        @condition.freeze()
+        self
       end
 
       def final_state()
         # variable_condition までは final_state にならないので注意
         check_initialize()
         final_alias = @alias.final_state()
-        final_defs = (@variable_definition - @block.ekill) | @block.egen
+        final_cond = @condition ? @condition.final_state() : nil
+        final_defs = (@definition - @block.ekill) | @block.egen
         final_undefs = @undefs + @block.ekill.map{|ir| ir.result_variable} - @block.egen.map{|ir| ir.result_variable}
-        Information.new(@block, @vars, final_alias, final_defs, final_undefs, @ptr_defs, @ptrs)
+        Information.new(@block, @vars, final_alias, final_cond, final_defs, final_undefs, @ptr_defs, @ptrs)
       end
 
       def find_same_variables(var)
@@ -51,7 +66,7 @@ module CastOff::Compiler
         check_initialize()
         @alias.validate()
         bug() unless @alias.final_state() == @block.information.alias.final_state()
-        defs = @variable_definition.map{|d| d.result_variable}.compact()
+        defs = @definition.map{|d| d.result_variable}.compact()
         bug() unless (defs & @undefs).empty?
         bug() unless (@vars - (defs | @undefs)).empty?
       end
@@ -60,15 +75,19 @@ module CastOff::Compiler
         check_initialize()
         @alias.validate()
         bug() unless @alias == @block.information.alias.final_state()
-        defs = @variable_definition.map{|d| d.result_variable}.compact()
+        defs = @definition.map{|d| d.result_variable}.compact()
         bug() unless (defs & @undefs).empty?
         bug() unless (@vars - (defs | @undefs)).empty?
+        bug() unless @condition.instance_of?(Condition)
+        bug() unless @block.information.condition.instance_of?(Condition)
+        bug() unless @condition == @block.information.condition.final_state()
       end
 
       def step(ir)
         check_initialize()
         @alias.step(ir)
-        @variable_condition.step(ir)
+        bug() unless @condition.instance_of?(Condition)
+        @condition.step(ir)
         delete(ir)
         add(ir)
       end
@@ -76,13 +95,14 @@ module CastOff::Compiler
       def |(other)
         check_initialize()
         bug() unless other.instance_of?(Information)
-        Information.new(@block, @vars, @alias.union(other.alias), @variable_definition | other.variable_definition, @undefs | other.undefs, @ptr_defs, @ptrs)
+        bug() if @condition
+        Information.new(@block, @vars, @alias.union(other.alias), nil, @definition | other.definition, @undefs | other.undefs, @ptr_defs, @ptrs)
       end
 
       def kill_definition(other)
-        @variable_definition.delete_if do |d0|
+        @definition.delete_if do |d0|
           next unless d0.result_variable
-          not other.variable_definition.find{|d1| d0.result_variable == d1.result_variable}
+          not other.definition.find{|d1| d0.result_variable == d1.result_variable}
         end
       end
 
@@ -90,8 +110,9 @@ module CastOff::Compiler
         check_initialize()
         bug() unless other.instance_of?(Information)
         bug() unless @block == other.block
-        return false unless (@variable_definition - other.variable_definition).empty? && (other.variable_definition - @variable_definition).empty?
+        return false unless (@definition - other.definition).empty? && (other.definition - @definition).empty?
         return false unless (@undefs - other.undefs).empty? && (other.undefs - @undefs).empty?
+        return false unless @condition == other.condition
         @alias == other.alias
       end
 
@@ -102,23 +123,23 @@ module CastOff::Compiler
 
       def size()
         check_initialize()
-        @variable_definition.size()
+        @definition.size()
       end
 
       def replace_entry(ir)
         check_initialize()
-        i = @variable_definition.index(ir)
-        @variable_definition[i] = ir if i
+        i = @definition.index(ir)
+        @definition[i] = ir if i
       end
 
       def reject!(&b)
         check_initialize()
-        @variable_definition.reject!{|ir| yield ir}
+        @definition.reject!{|ir| yield ir}
       end
 
       def flatten!
         check_initialize()
-        @variable_definition.flatten!
+        @definition.flatten!
       end
 
       def hash()
@@ -127,16 +148,16 @@ module CastOff::Compiler
 
       def dup()
         check_initialize()
-        Information.new(@block, @vars, @alias.dup(), @variable_definition.dup(), @undefs.dup(), @ptr_defs, @ptrs)
+        Information.new(@block, @vars, @alias.dup(), @condition ? @condition.dup() : nil, @definition.dup(), @undefs.dup(), @ptr_defs, @ptrs)
       end
 
       def to_s()
-        @variable_definition.join("\n")
+        @definition.join("\n")
       end
 
-      def variable_definition_of(var)
+      def definition_of(var)
         check_initialize()
-        @variable_definition.select{|d| d.result_variable == var}
+        @definition.select{|d| d.result_variable == var}
       end
 
       def undefined_variables()
@@ -146,7 +167,7 @@ module CastOff::Compiler
 
       def mark(var)
         check_initialize()
-        ds = @variable_definition.select {|d| var == d.result_variable }
+        ds = @definition.select {|d| var == d.result_variable }
         ds.inject(false){|change, d| d.alive() || change}
       end
 
@@ -156,9 +177,9 @@ module CastOff::Compiler
         return false unless var.is_a?(Variable)
         ret = false
 
-        bug() unless @variable_condition
-        ret |= @variable_condition.use(var)
-        ds = @variable_definition.select {|d| var == d.result_variable }
+        bug() unless @condition
+        ret |= @condition.use(var)
+        ds = @definition.select {|d| var == d.result_variable }
         if @undefs.include?(var) || ds.empty?
           case var
           when TmpBuffer
@@ -180,7 +201,7 @@ module CastOff::Compiler
         check_initialize()
         return false if !var.is_a?(Variable) || var.class_exact?
 
-        ds = @variable_definition.select{|d| var == d.result_variable }
+        ds = @definition.select{|d| var == d.result_variable }
         if @undefs.include?(var) || ds.empty?
           case var
           when TmpBuffer, Pointer, Argument, Self
@@ -203,7 +224,7 @@ module CastOff::Compiler
       def can_not_unbox_variable_resolve_forward(var)
         check_initialize()
         return false if var.can_not_unbox?
-        ds = @variable_definition.select {|d| var == d.result_variable }
+        ds = @definition.select {|d| var == d.result_variable }
         if ds.empty?
           case var
           when TmpBuffer, Pointer, Argument, Self, ConstWrapper, Literal
@@ -224,7 +245,7 @@ module CastOff::Compiler
       def can_not_unbox_variable_resolve_backward(var)
         check_initialize()
         bug() unless var.can_not_unbox?
-        ds = @variable_definition.select {|d| var == d.result_variable }
+        ds = @definition.select {|d| var == d.result_variable }
         if ds.empty?
           case var
           when TmpBuffer, Pointer, Argument, Self, ConstWrapper, Literal
@@ -240,7 +261,7 @@ module CastOff::Compiler
         check_initialize()
         bug() if !var.unboxed? && !var.boxed?
         return false if var.boxed?
-        ds = @variable_definition.select {|d| var == d.result_variable }
+        ds = @definition.select {|d| var == d.result_variable }
         if ds.empty?
           case var
           when TmpBuffer, Pointer, Argument, Self, ConstWrapper, Literal
@@ -262,7 +283,7 @@ module CastOff::Compiler
       def box_value_resolve_backward(var)
         check_initialize()
         bug() unless var.boxed?
-        ds = @variable_definition.select {|d| var == d.result_variable }
+        ds = @definition.select {|d| var == d.result_variable }
         if ds.empty?
           case var
           when TmpBuffer, Pointer, Argument, Self, ConstWrapper, Literal
@@ -278,7 +299,7 @@ module CastOff::Compiler
         check_initialize()
         bug() if var.can_not_unbox?
         return false if var.unboxed?
-        ds = @variable_definition.select {|d| var == d.result_variable }
+        ds = @definition.select {|d| var == d.result_variable }
         if ds.empty?
           case var
           when TmpBuffer, Pointer, Argument, Self, ConstWrapper, Literal
@@ -308,239 +329,331 @@ module CastOff::Compiler
 
       def check_initialize()
         bug() unless @block.instance_of?(BasicBlock)
-        bug() unless @variable_definition.instance_of?(Array)
+        bug() unless @definition.instance_of?(Array)
         bug() unless @ptr_defs.instance_of?(Array)
         bug() unless @undefs.instance_of?(Array)
         bug() unless @ptrs.instance_of?(Array)
         bug() unless @vars.instance_of?(Array)
         bug() unless @alias.instance_of?(Alias)
-        bug() unless @variable_condition.instance_of?(VariableCondition)
+        bug() unless @condition.nil? || @condition.instance_of?(Condition)
       end
 
       def delete(ir)
         check_initialize()
-        @variable_definition.reject!{|d| d.result_variable == ir.result_variable}
+        @definition.reject!{|d| d.result_variable == ir.result_variable}
         if ir.dispatch_method?
-          @variable_definition -= @ptr_defs 
+          @definition -= @ptr_defs 
           @undefs |= @ptrs
         end
       end
 
       def add(ir)
         check_initialize()
-        @variable_definition << ir
+        @definition << ir
         result_variable = ir.result_variable
         @undefs -= [result_variable] if result_variable
       end
+    end # Information
 
-      class Alias
-        include CastOff::Compiler::SimpleIR
-        include CastOff::Util
-        attr_reader :set
+    class Condition
+      include CastOff::Util
+      include SimpleIR
 
-        def initialize(b, a, all, ptrs)
-          bug() unless b.instance_of?(BasicBlock)
-          @block = b
-          @all = all
-          @ptrs = ptrs
-          case a
-          when NilClass
-            a = all.dup()
-            bug() if a.find{|v| not v.is_a?(Variable)}
-            @set = [a]
-          when Array
-            bug() if a.find{|v| not v.is_a?(Variable)}
-            @set = a.map{|v| [v]}
-          when Alias
-            @set = a.set.map{|s| s.dup()}
+      attr_reader :block, :condition, :temporary_condition
+
+      def initialize(b, ptrs, a_or_c, tmp = nil)
+        # 管理が煩雑になるので、alias を内部で保持しないこと。
+        # step 時に alias まで進めないと、final_state で古い alias を持つことになる。
+        @block = b
+        @ptrs = ptrs
+        @temporary_condition = tmp
+        case a_or_c
+        when Alias
+          @condition = initialize_condition_from_block(a_or_c)
+        when Hash
+          # @condition は呼び出し元で dup している
+          @condition = a_or_c
+          bug() if @condition.keys.find{|v| !v.is_a?(Variable)}
+          bug() if @condition.values.find{|p| !p.is_a?(Proc)}
+        else
+          bug()
+        end
+      end
+
+      def use(v)
+        promote_temporary_condition()
+        bug() if @temporary_condition
+        p = @condition[v]
+        p ? p.call(v) : false
+      end
+
+      def step(ir)
+        promote_temporary_condition()
+        bug() if @temporary_condition
+        unless ir.result_variable
+          bug() if ir.dispatch_method?
+          return
+        end
+        case ir
+        when SubIR
+          src = ir.src
+          dst = ir.dst
+          if @condition[src]
+            @condition[dst] = @condition[src]
           else
-            bug()
+            @condition.delete(dst)
           end
-          validate()
-        end
-
-        def freeze()
-          super()
-          @all.freeze()
-          @set.freeze()
-          @ptrs.freeze()
-        end
-
-        def final_state()
-          a = dup()
-          @block.irs.each{|ir| a.step(ir)}
-          a
-        end
-
-        def step(ir)
-          case ir
-          when SubIR
-            src = ir.src
-            dst = ir.dst
-            src.is_a?(Variable) ? sub(src, dst) : isolate(dst)
-          when CallIR
-            return_value = ir.return_value
-            bug() unless return_value.is_a?(Variable)
-            isolate(return_value)
-            @ptrs.each{|p| isolate(p)} if ir.dispatch_method?
-          end
-        end
-
-        def dup()
-          Alias.new(@block, self, @all, @ptrs)
-        end
-
-        def find_set(var)
-          bug() unless var.is_a?(Variable)
-          set.each{|s| return s if s.include?(var)}
-          bug("set = #{set}, var = #{var}, #{var.class}")
-        end
-
-        def validate()
-          a = @set.inject([]) do |ary, s|
-            bug() unless (ary & s).empty?
-            ary + s
-          end
-          size = @all.size()
-          bug() unless a.size() == size && (a & @all).size() == size
-        end
-
-        def eql?(other)
-          other_set = other.set.dup()
-          @set.each{|s| other_set.delete(s){return false}}
-          bug() unless other_set.empty?
-          return true
-        end
-
-        def ==(other)
-          eql?(other)
-        end
-
-        def union(other)
-          a = @all.dup()
-          new_set = []
-          until a.empty?
-            var = a.pop()
-            s0 = find_set(var)
-            s1 = other.find_set(var)
-            s = s0 & s1
-            new_set << s
-            a -= s
-          end
-          @set = new_set
-          validate()
-          dup()
-        end
-
-        private
-
-        def sub(arg0, result)
-          return if arg0 == result
-          reject(result)
-          s = find_set(arg0)
-          bug() if s.include?(result)
-          s << result
-        end
-
-        def isolate(var)
-          reject(var)
-          @set << [var]
-        end
-
-        def reject(var)
-          s = find_set(var)
-          s.delete(var){bug()}
-          @set.delete(s){bug()} if s.empty?
-        end
-      end # Alias
-
-      class VariableCondition
-        include CastOff::Util
-        include SimpleIR
-
-        attr_reader :block, :condition
-
-        def initialize(b, ptrs, a)
-          @block = b
-          @ptrs = ptrs
-          @condition = initialize_condition_from_block(a)
-        end
-
-        def use(v)
-          p = @condition[v]
-          p ? p.call(v) : false
-        end
-
-        def step(ir)
-          unless ir.result_variable
-            bug() if ir.dispatch_method?
-            return
-          end
-          @condition.delete(ir.result_variable)
+        when CallIR
+          return_value = ir.return_value
+          bug() unless return_value.is_a?(Variable)
+          @condition.delete(return_value)
           @ptrs.each{|p| @condition.delete(p)} if ir.dispatch_method?
         end
+      end
 
-        def eql?(other)
-          #@condition == other.condition && @block == other.block
-          bug()
-        end
+      def dup()
+        # condition は呼び出し元で dup する
+        tmp = @temporary_condition ? @temporary_condition.dup() : nil
+        Condition.new(@block, @ptrs, @condition.dup, tmp)
+      end
 
-        def ==(other)
-          eql?(other)
-        end
+      def final_state
+        v = dup()
+        @block.irs.each{|ir| v.step(ir)}
+        v
+      end
 
-        def hash
-          bug()
-        end
-
-        def freeze()
-          super()
-          @ptrs.freeze()
-          @condition.freeze()
-        end
-
-        private
-
-        NilWrapper   = ClassWrapper.new(NilClass,   true)
-        FalseWrapper = ClassWrapper.new(FalseClass, true)
-        def initialize_condition_from_block(a)
-          cond = {}
-          bug() unless a.instance_of?(Alias)
-          return cond unless @block.pre.size == 1
-          b = @block.pre[0]
-          ir = b.irs.last
-          return cond unless ir.is_a?(JumpIR)
-          fallthrough = (ir.jump_targets & @block.labels).empty?
-          p = nil
-          case ir.jump_type
-          when :branchif
-            if fallthrough
-              p = proc{|v| v.is_negative_cond_value; v.is_static([NilWrapper, FalseWrapper])}
-            else
-              p = proc{|v| v.is_not([NilWrapper, FalseWrapper])}
-            end
-          when :branchunless
-            if fallthrough
-              p = proc{|v| v.is_not([NilWrapper, FalseWrapper])}
-            else
-              p = proc{|v| v.is_negative_cond_value; v.is_static([NilWrapper, FalseWrapper])}
-            end
+      def union(other)
+        bug() unless @block.pre.include?(other.block)
+        bug() unless other.instance_of?(Condition)
+        if @temporary_condition
+          tmp = @temporary_condition.dup
+          other.condition.each do |(v, p)|
+            tmp.delete(v) if !tmp[v] || (tmp[v] && tmp[v] != p)
           end
-          if p
-            set = a.find_set(ir.cond_value)
-            bug() if set.empty?
-            set.each{|s| cond[s] = p}
-          end
-          cond
+        else
+          tmp = other.condition.dup
         end
-      end #VariableCondition
-    end # Information
+        # condition は呼び出し元で dup する
+        Condition.new(@block, @ptrs, @condition.dup, tmp)
+      end
+
+      def eql?(other)
+        return false unless @block == other.block
+        return false unless @temporary_condition == other.temporary_condition
+        @condition == other.condition
+      end
+
+      def ==(other)
+        eql?(other)
+      end
+
+      def hash
+        bug()
+      end
+
+      def freeze()
+        super()
+        @ptrs.freeze()
+        @condition.freeze()
+        self
+      end
+
+      def to_s
+        @condition.inject(''){|str, (v, p)|
+          str.concat("#{v} => #{p}\n")
+        }.chomp
+      end
+
+      private
+
+      NilWrapper   = ClassWrapper.new(NilClass,   true)
+      FalseWrapper = ClassWrapper.new(FalseClass, true)
+      CondNotNilNotFalse = proc{|v| v.is_not([NilWrapper, FalseWrapper])}
+      CondNilOrFalse     = proc{|v| v.is_negative_cond_value; v.is_static([NilWrapper, FalseWrapper])}
+      CondNotNilNotFalse.instance_eval do
+        def to_s
+          "neither nil nor false"
+        end
+      end
+      CondNilOrFalse.instance_eval do
+        def to_s
+          "nil or false"
+        end
+      end
+      def initialize_condition_from_block(a)
+        cond = {}
+        bug() unless a.instance_of?(Alias)
+        return cond unless @block.pre.size == 1
+        b = @block.pre[0]
+        ir = b.irs.last
+        return cond unless ir.is_a?(JumpIR)
+        fallthrough = (ir.jump_targets & @block.labels).empty?
+        p = nil
+        case ir.jump_type
+        when :branchif
+          p = fallthrough ? CondNilOrFalse : CondNotNilNotFalse
+        when :branchunless
+          p = fallthrough ? CondNotNilNotFalse : CondNilOrFalse
+        end
+        if p
+          set = a.find_set(ir.cond_value)
+          bug() if set.empty?
+          set.each{|s| cond[s] = p}
+        end
+        cond
+      end
+
+      def promote_temporary_condition()
+        return unless @temporary_condition
+        bug() unless @temporary_condition.instance_of?(Hash)
+        @temporary_condition.each do |(v, p)|
+          bug() unless v.is_a?(Variable)
+          bug() if @condition[v] && @condition[v] != p
+          @condition[v] = p
+        end
+        @temporary_condition = nil
+      end
+    end #Condition
 
     def calc_egen_ekill
       all = all_ir()
       @blocks.each { |b| b.calc_egen() }
       @blocks.each { |b| b.calc_ekill(all) }
     end
+
+    class Alias
+      include CastOff::Compiler::SimpleIR
+      include CastOff::Util
+      attr_reader :set
+
+      def initialize(b, a, all, ptrs)
+        bug() unless b.instance_of?(BasicBlock)
+        @block = b
+        @all = all
+        @ptrs = ptrs
+        case a
+        when NilClass
+          a = all.dup()
+          bug() if a.find{|v| not v.is_a?(Variable)}
+          @set = [a]
+        when Array
+          bug() if a.find{|v| not v.is_a?(Variable)}
+          @set = a.map{|v| [v]}
+        when Alias
+          @set = a.set.map{|s| s.dup()}
+        else
+          bug()
+        end
+        validate()
+      end
+
+      def freeze()
+        super()
+        @all.freeze()
+        @set.freeze()
+        @ptrs.freeze()
+        self
+      end
+
+      def final_state()
+        a = dup()
+        @block.irs.each{|ir| a.step(ir)}
+        a
+      end
+
+      def step(ir)
+        case ir
+        when SubIR
+          src = ir.src
+          dst = ir.dst
+          src.is_a?(Variable) ? sub(src, dst) : isolate(dst)
+        when CallIR
+          return_value = ir.return_value
+          bug() unless return_value.is_a?(Variable)
+          isolate(return_value)
+          @ptrs.each{|p| isolate(p)} if ir.dispatch_method?
+        end
+      end
+
+      def dup()
+        Alias.new(@block, self, @all, @ptrs)
+      end
+
+      def find_set(var)
+        bug() unless var.is_a?(Variable)
+        set.each{|s| return s if s.include?(var)}
+        bug("set = #{set}, var = #{var}, #{var.class}")
+      end
+
+      def validate()
+        a = @set.inject([]) do |ary, s|
+          bug() unless (ary & s).empty?
+          ary + s
+        end
+        size = @all.size()
+        bug() unless a.size() == size && (a & @all).size() == size
+      end
+
+      def eql?(other)
+        other_set = other.set.dup()
+        @set.each{|s| other_set.delete(s){return false}}
+        bug() unless other_set.empty?
+        return true
+      end
+
+      def ==(other)
+        eql?(other)
+      end
+
+      def __union(other)
+        a = @all.dup()
+        new_set = []
+        until a.empty?
+          var = a.pop()
+          s0 = find_set(var)
+          s1 = other.find_set(var)
+          s = s0 & s1
+          new_set << s
+          a -= s
+        end
+        @set = new_set
+        validate()
+      end
+
+      def union(other)
+        a = dup()
+        a.__union(other)
+        a
+      end
+
+      def to_s
+        @set.inject(''){|str, s|
+          str.concat(s.map{|v| v.to_debug_string}.join(", ")).concat("\n")
+        }.chomp
+      end
+
+      private
+
+      def sub(arg0, result)
+        return if arg0 == result
+        reject(result)
+        s = find_set(arg0)
+        bug() if s.include?(result)
+        s << result
+      end
+
+      def isolate(var)
+        reject(var)
+        @set << [var]
+      end
+
+      def reject(var)
+        s = find_set(var)
+        s.delete(var){bug()}
+        @set.delete(s){bug()} if s.empty?
+      end
+    end # Alias
 
     class BasicBlock
       attr_reader :egen, :ekill
@@ -612,6 +725,25 @@ module CastOff::Compiler
       end
     end
 
+    def set_condition
+      @blocks.each{|b| b.information.initialize_condition()}
+      change = true
+      entry = @blocks.first
+      while change
+        change = false
+        @blocks.each do |b0|
+          next if b0 == entry
+          info = b0.information
+          cond = b0.pre.inject(info.condition.dup) do |c, b1|
+            next c if b0 == b1
+            c.union(b1.information.condition.final_state)
+          end
+          change = true if info.condition != cond
+          info.condition = cond
+        end
+      end
+    end
+
     def set_information
       ptr_defs = all_pointer_definition()
       ptrs = all_pointer()
@@ -622,14 +754,14 @@ module CastOff::Compiler
       bug() if @blocks.find{|b| (not b.in_undefined) || (not b.out_undefined)}
       bug() if @blocks.find{|b| b != entry && b.pre.empty? }
       bug() unless entry.pre.empty?
-      @blocks.each{|b| b.information = Information.new(b, vars, vars, [], [], ptr_defs, ptrs)}
-      entry.information = Information.new(entry, vars, vars, [], vars, ptr_defs, ptrs)
+      @blocks.each{|b| b.information = Information.new(b, vars, vars, nil, [], [], ptr_defs, ptrs)}
+      entry.information = Information.new(entry, vars, vars, nil, [], vars, ptr_defs, ptrs)
       change = true
       while change
         change = false
         @blocks.each do |b0|
           next if b0 == entry
-          info = b0.pre.inject(Information.new(b0, vars, nil, [], [], ptr_defs, ptrs)) {|info, b1| info | b1.information.final_state()}
+          info = b0.pre.inject(Information.new(b0, vars, nil, nil, [], [], ptr_defs, ptrs)) {|info, b1| info | b1.information.final_state()}
           change = true if b0.information != info
           b0.information = info
         end
@@ -645,18 +777,19 @@ module CastOff::Compiler
           b0.information = info
         end
       end
+      set_condition()
       @blocks.each{|b| b.information.freeze()}
       # validation
       @blocks.each do |b|
-        variable_definition = b.information.dup()
-        variable_definition.validate()
+        definition = b.information.dup()
+        definition.validate()
         b.irs.each do |ir|
           ir.variables_without_result.each do |var|
-            var.has_undefined_path() if variable_definition.undefined_variables.include?(var)
+            var.has_undefined_path() if definition.undefined_variables.include?(var)
           end
-          variable_definition.step(ir)
+          definition.step(ir)
         end
-        variable_definition.validate_final()
+        definition.validate_final()
       end
       @blocks.each do |b|
         u0 = b.in_undefined
@@ -676,18 +809,18 @@ module CastOff::Compiler
 
       def initialize(b, d, g, ptrs)
         @block = b
-        @variable_definition = d
+        @definition = d
         @guards = g
         @ptrs = ptrs
       end
 
       def dup()
-        Guards.new(@block, @variable_definition.dup(), @guards.dup(), @ptrs)
+        Guards.new(@block, @definition.dup(), @guards.dup(), @ptrs)
       end
 
       def &(other)
         bug() unless other.instance_of?(Guards)
-        Guards.new(@block, @variable_definition.dup(), @guards & other.guards, @ptrs)
+        Guards.new(@block, @definition.dup(), @guards & other.guards, @ptrs)
       end
 
       def eql?(other)
@@ -707,7 +840,7 @@ module CastOff::Compiler
       end
 
       def validate_final()
-        @variable_definition.validate_final()
+        @definition.validate_final()
       end
 
       def redundant?(ir)
@@ -720,7 +853,7 @@ module CastOff::Compiler
           guard_value = ir.guard_value
           bug() unless guard_value.is_a?(Variable)
           @guards | [guard_value]
-          @guards |= @variable_definition.find_same_variables(guard_value)
+          @guards |= @definition.find_same_variables(guard_value)
         when SubIR
           src = ir.src
           dst = ir.dst
@@ -733,13 +866,14 @@ module CastOff::Compiler
           @guards -= [ir.return_value]
           @guards -= @ptrs if ir.dispatch_method?
         end
-        @variable_definition.step(ir)
+        @definition.step(ir)
       end
 
       def freeze()
         super()
         @guards.freeze()
-        @variable_definition.freeze()
+        @definition.freeze()
+        self
       end
 
       def to_s()

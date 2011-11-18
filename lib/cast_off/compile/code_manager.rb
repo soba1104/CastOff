@@ -252,6 +252,7 @@ module CastOff
       def load_base_configuration()
         return nil unless File.exist?(@base_configuration_path)
         conf_str = File.open(@base_configuration_path, 'rb:us-ascii').read()
+        conf_str.untaint # FIXME
         Configuration.load(conf_str)
       end
 
@@ -260,7 +261,7 @@ module CastOff
         exist_conf_str = File.open("#{@dstdir}/#{@conffile}", 'rb:us-ascii').read()
         # exist_conf_str が tainted であるため、Marshal.load で読み込んだ class も tainted になってしまう
         # RDoc だと、それのせいで Insecure: can't modify array となる
-        #exist_conf_str.untaint
+        exist_conf_str.untaint # FIXME
         Configuration.load(exist_conf_str)
       end
 
@@ -274,7 +275,7 @@ module CastOff
       def load_annotation()
         return nil unless File.exist?(@annotation_path)
         ann_str = File.open(@annotation_path, 'rb:us-ascii').read()
-        ann_str.untaint
+        ann_str.untaint # FIXME
         Marshal.load(ann_str)
       end
 

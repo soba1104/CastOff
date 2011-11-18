@@ -93,19 +93,26 @@ expected <%= @guard_value.types %> but %s, %s\\n\\
 }
       EOS
 
-      GUARD_TEMPLATE = ERB.new(<<-EOS, 0, '%-', 'g0')
-%bug() if @guard_value.undefined? || @guard_value.dynamic?
-<%= guard_begin() %>
+      GUARD_RECOMPILATION_FUNCTION_TEMPLATE = ERB.new(<<-EOS, 0, '%-', '__recompilation')
+NOINLINE(static void <RECOMPILATION_FUNCTION_NAME>(VALUE obj));
+static void <RECOMPILATION_FUNCTION_NAME>(VALUE obj)
+{
 #if 1
-    if(!sampling_table) register_sampling_table(rb_hash_new());
-%  get_definition(@guard_value).each do |defn|
+  if(!sampling_table) register_sampling_table(rb_hash_new());
+%  count = 0
+%  defs = get_definition(@guard_value)
+%  defs.each do |defn|
 %    case defn
 %    when SubIR
 %      case defn.src
 %      when LocalVariable, DynamicVariable, InstanceVariable, ClassVariable, GlobalVariable, Self
-    sampling_variable(<%= @guard_value %>, ID2SYM(rb_intern("<%= defn.src.source %>")));
-%      when ConstWrapper, Literal
+%        count += 1
+  sampling_variable(obj, ID2SYM(rb_intern("<%= defn.src.source %>")));
+%      when ConstWrapper
 %        # Fixme
+  /* <%= defn.src.path %> */
+%      when Literal
+%        # nothing to do
 %      else
 %        bug(defn.src)
 %      end
@@ -115,12 +122,25 @@ expected <%= @guard_value.types %> but %s, %s\\n\\
 %      recv.types.each do |k|
 %        recv_class = @translator.get_c_classname(k)
 %        bug() unless recv_class
-    __sampling_poscall(<%= @guard_value %>, <%= recv_class %>, ID2SYM(rb_intern("<%= defn.method_id %>")));
+%        count += 1
+  __sampling_poscall(obj, <%= recv_class %>, ID2SYM(rb_intern("<%= defn.method_id %>")));
 %      end
 %    end
 %  end
-    rb_funcall(rb_mCastOff, rb_intern("re_compile"), 2, rb_str_new2("<%= @translator.signiture() %>"), sampling_table_val);
+%  if count > 0
+  rb_funcall(rb_mCastOff, rb_intern("re_compile"), 2, rb_str_new2("<%= @translator.signiture() %>"), sampling_table_val);
+%  else
+%    dlog("skip recompilation: defs = \#{defs.join("\\n")}")
+%  end
 #endif
+}
+      EOS
+
+      GUARD_TEMPLATE = ERB.new(<<-EOS, 0, '%-', 'g0')
+%bug() if @guard_value.undefined? || @guard_value.dynamic?
+<%= guard_begin() %>
+%func = @translator.declare_recompilation_function(GUARD_RECOMPILATION_FUNCTION_TEMPLATE.trigger(binding))
+    <%= func %>(<%= @guard_value %>);
 %if @configuration.deoptimize?
     goto <%= @insn.guard_label %>;
 %  @insn.iseq.inject_guard(@insn, GUARD_DEOPTIMIZATION_TEMPLATE.trigger(binding))

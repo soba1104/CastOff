@@ -670,7 +670,7 @@ Call site is (#{insn}).
           change = false
           @cfg.blocks.each do |b|
             foo = b.irs & irs
-            bar = b.information.variable_definition & irs
+            bar = b.information.definition & irs
             if foo.size > 0 || bar.size > 0
               vars = []
               bar.each do |ir|
@@ -745,7 +745,7 @@ Call site is (#{insn}).
         when Literal
           return [target]
         when Variable
-          ds = @information.variable_definition_of(target)
+          ds = @information.definition_of(target)
           bug() if ds.empty?
           ary = []
           ds.each do |d|

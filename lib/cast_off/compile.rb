@@ -546,26 +546,35 @@ Currently, CastOff cannot compile method which source file is not exist.
 
     def parse_sampling_table(sampling_table)
       reciever_result = {}
-      return_value_result = {}
+      return_value_result = {:instance_methods => {}, :singleton_methods => {}}
       sampling_table.each do |(key0, val0)|
         case key0
         when Symbol
           bug() unless val0.is_a?(Hash)
-          reciever_result[key0] = val0.keys
-        when Class
+          reciever_result[key0] = val0.to_a
+        when TrueClass, FalseClass
+          mtbl = return_value_result[(key0 ? :singleton_methods : :instance_methods)]
+          bug() unless mtbl.is_a?(Hash)
           bug() unless val0.is_a?(Hash)
-          newval = {}
-          val0.each do |(key1, val1)|
-            bug() unless key1.is_a?(Symbol)
-            bug() unless val1.is_a?(Hash)
-            newval[key1] = val1.keys
+          val0.each do |(klass, midtbl)|
+            bug() unless klass.is_a?(Class)
+            bug() unless midtbl.is_a?(Hash)
+            newval = {}
+            midtbl.each do |(key1, val1)|
+              bug() unless key1.is_a?(Symbol)
+              bug() unless val1.is_a?(Hash)
+              newval[key1] = val1.to_a
+            end
+            mtbl[klass] = newval
           end
-          return_value_result[key0] = newval
         else
           bug("#{key0}, #{key0.class}")
         end
       end
-      bug() unless (reciever_result.keys & return_value_result.keys).empty?
+      k0 = reciever_result.keys
+      k1 = return_value_result[:instance_methods].keys
+      k2 = return_value_result[:singleton_methods].keys
+      bug() unless (k0 & k1 & k2).empty?
       [reciever_result, return_value_result]
     end
 
@@ -603,8 +612,13 @@ Currently, CastOff cannot compile method which source file is not exist.
             reciever_result.each do |key0, val0|
               bug() unless key0.is_a?(Symbol)
               bug() unless val0.is_a?(Array)
-              val0.each do |t|
-                ary << [key0.to_s, t.to_s]
+              val0.each do |(klass, singleton_p)|
+                kstr = klass.to_s
+                if singleton_p
+                  bug() unless klass.is_a?(Class)
+                  kstr = "Class<#{kstr}>"
+                end
+                ary << [key0.to_s, kstr]
               end
             end
             suggestion.add_suggestion(msg, ["<Variable>", "<SamplingResultClass>"], ary)
@@ -612,11 +626,22 @@ Currently, CastOff cannot compile method which source file is not exist.
           if return_value_result.size > 0
             msg = "These are unresolved method return values sampling results."
             ary = []
-            return_value_result.each do |key0, val0|
-              bug() unless key0.is_a?(Class)
-              bug() unless val0.is_a?(Hash)
-              val0.each do |(mid, types)|
-                types.each{|t| ary << ["#{key0}##{mid}", t.to_s]}
+            return_value_result.each do |sym, mtbl|
+              bug() unless sym == :singleton_methods || sym == :instance_methods
+              bug() unless mtbl.is_a?(Hash)
+              mtbl.each do |key0, val0|
+                bug() unless key0.is_a?(Class)
+                bug() unless val0.is_a?(Hash)
+                val0.each do |(mid, classes)|
+                  classes.each do |(klass, singleton_p)|
+                    kstr = klass.to_s
+                    if singleton_p
+                      bug() unless klass.is_a?(Class)
+                      kstr = "Class<#{kstr}>"
+                    end
+                    ary << ["#{key0}#{sym == :singleton_methods ? '.' : '#'}#{mid}", kstr]
+                  end
+                end
               end
             end
             suggestion.add_suggestion(msg, ["<Method>", "<SamplingResultClass>"], ary)

@@ -89,19 +89,19 @@ end
 * Usage
 
 ** Use CastOff from command line
-By use of command line tool CastOff, you can improve performance of your Ruby program easily.
+By use of command line tool cast_off, you can improve performance of your Ruby program easily.
 If you want to improve performance of your Ruby program, you should execute following command repeatedly.
 
 -----------------------------------------------------
-$CastOff PathOfTargetProgram ArgumentsOfTargetProgram
+$cast_off PathOfTargetProgram ArgumentsOfTargetProgram
 -----------------------------------------------------
 
 For example, when you want to improve performance of Ruby program "foo.rb"
 (in this example, "foo.rb" recieves one argument "bar" or "baz"), you should execute following commands.
 
 -----------------------------------------------------
-$CastOff foo.rb bar
-$CastOff foo.rb baz
+$cast_off foo.rb bar
+$cast_off foo.rb baz
 -----------------------------------------------------
 
 When you execute these commands, CastOff does followings to compile foo.rb and related libraries.
@@ -111,34 +111,20 @@ When you execute these commands, CastOff does followings to compile foo.rb and r
 3: Executes "foo.rb" with argument "baz" to get and update profile information.
 4: Compiles "foo.rb" and related libraries.
 
-When CastOff finishes compilation, CastOff outputs some codes.
-You can load compiled methods by pasting these codes.
-In above example, CastOff outputs following codes.
+After CastOff finishes compilation, you can run target program with --run option.
+In above example, you can run target program with compiled codes by use of following command.
 
------------------------------------------------------
-require 'cast_off'
-CastOff.program_name = "foo.rb"
-CastOff.skip_configuration_check(true)
-CastOff.deoptimize(false)
-CastOff.use_default_configuration()
-CastOff.autoload()
------------------------------------------------------
-
-"CastOff.autoload" uses trace api provided from Ruby runtime.
-But this api slows down Ruby program execution significantly.
-If you want to avoid this overhead, call "CastOff.autoload" after all method definitions.
-CastOff uses trace api to check method definition,
-so if you call "CastOff.autoload" after all method definitions, CastOff can cancel tracing immediately.
+$cast_off --run foo.rb bar
 
 
 *** Command line arguments
 
-CastOff [options] PathOfTargetProgram ArgumentsOfTargetProgram
+cast_off [options] PathOfTargetProgram ArgumentsOfTargetProgram
 
 
 *** Command line options
---verbose
-Show compilation progress and internal information.
+--run
+Execute target program with compiled methods.
 
 --deoptimize
 Enable deoptimization.
@@ -147,7 +133,7 @@ Enable deoptimization.
 Clear profile information and delete compiled methods.
 If you want to clear profile information and compiled methods of target name "foo",
 you should execute following command.
-$CastOff --clear --name=foo
+$cast_off --clear --name=foo
 
 --threshold=COUNT
 Compile method which is executed more than COUNT.
@@ -158,22 +144,14 @@ Name compiled methods NAME.
 This name is used for search of compiled methods.
 If you don't use this option, CastOff uses File.basename([programfile]) as name.
 
+--verbose
+Show compilation progress and internal information.
+
 -h, --help
 Show help.
 
 --version
 Show version number of CastOff.
-
---step-1
-Execute first step of compilation.
-On this step, CastOff decides compilation target methods.
-
---step-2
-Execute second step of compilation.
-On this step, CastOff collects profile information and compiles methods.
-
---run
-Execute target program with compiled methods.
 
 
 

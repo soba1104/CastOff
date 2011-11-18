@@ -23,6 +23,18 @@ module CastOff::Compiler
         bug() if @insns.find{|i| i.iseq != @iseq}
       end
 
+      def source
+        return '' unless @irs
+        line = nil
+        @irs.inject(''){|src, ir|
+          insn = ir.insn
+          next src if insn.line == line
+          next src if insn.source.empty?
+          line = insn.line
+          src.concat(insn.source).concat("\n")
+        }.chomp
+      end
+
       def entry_point?
         @entry_point
       end

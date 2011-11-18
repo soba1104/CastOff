@@ -302,7 +302,7 @@ module CastOff::Compiler
             bug() unless ir.src.unboxed? == ir.dst.unboxed?
           end
           ir.variables_without_result.each do |v|
-            ds = defs.variable_definition.select {|d| v == d.result_variable }
+            ds = defs.definition.select {|d| v == d.result_variable }
             if v.unboxed?
               bug() if ds.find{|d| not d.result_variable.unboxed? }
             elsif v.boxed?

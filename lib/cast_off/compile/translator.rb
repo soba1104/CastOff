@@ -87,6 +87,7 @@ static void sampling_variable(VALUE val, VALUE sym)
   /* :variable => [klass0, klass1, ...] */
   VALUE klass = rb_class_of(val);
   VALUE hashval;
+  VALUE singleton_class_obj_p = Qfalse;
   st_table *hash;
 
   if (!st_lookup(sampling_table, (st_data_t)sym, (st_data_t*)&hashval)) {
@@ -96,11 +97,16 @@ static void sampling_variable(VALUE val, VALUE sym)
   hash = RHASH_TBL(hashval);
 
   if (FL_TEST(klass, FL_SINGLETON)) {
-    klass = rb_cCastOffSingletonClass;
+    if (rb_obj_class(val) == rb_cClass) {
+      klass = val;
+      singleton_class_obj_p = Qtrue;
+    } else {
+      klass = rb_cCastOffSingletonClass;
+    }
   }
 
   if (!st_lookup(hash, (st_data_t)klass, 0)) {
-    st_insert(hash, (st_data_t)klass, (st_data_t)Qtrue);
+    st_insert(hash, (st_data_t)klass, (st_data_t)singleton_class_obj_p);
   }
 
   return;
@@ -109,18 +115,30 @@ static void sampling_variable(VALUE val, VALUE sym)
 static void __sampling_poscall(VALUE val, VALUE method_klass, VALUE method_id)
 {
   VALUE klass;
-  VALUE method_id_hashval, hashval;
-  st_table *method_id_hash, *hash;
+  VALUE mtblval, method_id_hashval, hashval;
+  VALUE singleton_class_obj_p = Qfalse;
+  VALUE class_method_p = Qfalse;
+  st_table *mtbl, *method_id_hash, *hash;
 
   if (FL_TEST(method_klass, FL_SINGLETON)) {
-    method_klass = rb_cCastOffSingletonClass;
+    VALUE recv = rb_ivar_get(method_klass, rb_intern("__attached__"));
+    if (rb_obj_class(recv) == rb_cClass && rb_class_of(recv) == method_klass) {
+      method_klass = recv;
+      class_method_p = Qtrue;
+    } else {
+      method_klass = rb_cCastOffSingletonClass;
+    }
   }
 
-  klass = rb_class_of(val);
+  if (!st_lookup(sampling_table, (st_data_t)class_method_p, (st_data_t*)&mtblval)) {
+    mtblval = rb_hash_new();
+    st_insert(sampling_table, (st_data_t)class_method_p, (st_data_t)mtblval);
+  }
+  mtbl = RHASH_TBL(mtblval);
 
-  if (!st_lookup(sampling_table, (st_data_t)method_klass, (st_data_t*)&method_id_hashval)) {
+  if (!st_lookup(mtbl, (st_data_t)method_klass, (st_data_t*)&method_id_hashval)) {
     method_id_hashval = rb_hash_new();
-    st_insert(sampling_table, (st_data_t)method_klass, (st_data_t)method_id_hashval);
+    st_insert(mtbl, (st_data_t)method_klass, (st_data_t)method_id_hashval);
   }
   method_id_hash = RHASH_TBL(method_id_hashval);
   if (!st_lookup(method_id_hash, (st_data_t)method_id, (st_data_t*)&hashval)) {
@@ -129,12 +147,18 @@ static void __sampling_poscall(VALUE val, VALUE method_klass, VALUE method_id)
   }
   hash = RHASH_TBL(hashval);
 
+  klass = rb_class_of(val);
   if (FL_TEST(klass, FL_SINGLETON)) {
-    klass = rb_cCastOffSingletonClass;
+    if (rb_obj_class(val) == rb_cClass) {
+      klass = val;
+      singleton_class_obj_p = Qtrue;
+    } else {
+      klass = rb_cCastOffSingletonClass;
+    }
   }
 
   if (!st_lookup(hash, (st_data_t)klass, 0)) {
-    st_insert(hash, (st_data_t)klass, (st_data_t)Qtrue);
+    st_insert(hash, (st_data_t)klass, (st_data_t)singleton_class_obj_p);
   }
 
   return;
@@ -383,6 +407,10 @@ static inline int empty_method_table_p(VALUE klass)
 
 %@class_check_functions.each do |(func, name)|
 <%= func.gsub(/<CLASS_CHECK_FUNCTION_NAME>/, name) %>
+%end
+
+%@recompilation_functions.each do |(func, name)|
+<%= func.gsub(/<RECOMPILATION_FUNCTION_NAME>/, name) %>
 %end
 
 %if !inline_block?
@@ -769,6 +797,7 @@ void Init_<%= signiture() %>(void)
       @declare_constants = {}
       @class_check_functions = {}
       @throw_exception_functions = {}
+      @recompilation_functions = {}
       @prefetch_constants = {}
       @ivar_index = {}
       @loopkey = {}
@@ -908,6 +937,15 @@ Source line is #{@root_iseq.source_line}.
         idx = @throw_exception_functions.size()
         name = "throw_exception_#{idx}"
         @throw_exception_functions[func] = name
+      end
+      name
+    end
+
+    def declare_recompilation_function(func)
+      unless name = @recompilation_functions[func]
+        idx = @recompilation_functions.size()
+        name = "recompilation_#{idx}"
+        @recompilation_functions[func] = name
       end
       name
     end

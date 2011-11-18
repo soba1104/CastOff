@@ -244,8 +244,7 @@ o = Object
         dst = (@variable_configuration[sym] ||= [])
         (src + dst).each do |cw|
           bug() unless cw.instance_of?(ClassWrapper)
-          bug() if cw.singleton?
-          bug() if cw.contain_class == SingletonClass
+          bug() if !cw.singleton? && cw.contain_class == SingletonClass
         end
         @variable_configuration[sym] = (dst | src)
       end
@@ -253,16 +252,14 @@ o = Object
       conf.return_value_configuration.each do |(cw0, src0)|
         bug() unless src0.instance_of?(Hash)
         bug() unless cw0.instance_of?(ClassWrapper)
-        bug() if cw0.singleton?
-        bug() if cw0.contain_class == SingletonClass
+        bug() if !cw0.singleton? && cw0.contain_class == SingletonClass
         dst0 = (@return_value_configuration[cw0] ||= {})
         src0.each do |(sym, src1)|
           bug() unless src1.instance_of?(Array)
           dst1 = (dst0[sym] ||= [])
           (src1 + dst1).each do |cw1|
             bug() unless cw1.instance_of?(ClassWrapper)
-            bug() if cw1.singleton?
-            bug() if cw1.contain_class == SingletonClass
+            bug() if !cw1.singleton? && cw1.contain_class == SingletonClass
           end
           dst0[sym] = (dst1 | src1)
         end
@@ -278,13 +275,19 @@ o = Object
       update_hash.each do |(k, v)|
         bug() unless k.instance_of?(Symbol)
         bug() unless v.instance_of?(Array)
-        next if v.include?(SingletonClass)
+        next if v.map{|a| a.first }.include?(SingletonClass)
         # variable annotation
         a0 = v
-        a0 = a0.map{|c|
+        a0 = a0.map{|(c, singleton_p)|
           bug(c) unless c.is_a?(Class)
           bug()  unless c != SingletonClass
-          ClassWrapper.new(c, true)
+          if singleton_p
+            wrapper = ClassWrapper.new(c, false)
+            bug() unless wrapper.singleton?
+          else
+            wrapper = ClassWrapper.new(c, true)
+          end
+          wrapper
         }
         a1 = @variable_configuration[k] || []
         update_p = true unless (a0 - a1).empty?
@@ -296,27 +299,38 @@ o = Object
 
     def update_return_value_configuration(update_hash)
       update_p = false
-      update_hash.each do |(k, v)|
-        bug() unless k.instance_of?(Class)
-        bug() unless v.instance_of?(Hash)
-        next if k == SingletonClass
-        # return value annotation
-        h0 = v
-        k  = ClassWrapper.new(k, true)
-        h1 = @return_value_configuration[k] || {}
-        h0.each do |(mid, klasses0)|
-          next if klasses0.include?(SingletonClass)
-          klasses0 = klasses0.map{|c|
-            bug(c) unless c.is_a?(Class)
-            bug()  unless c != SingletonClass
-            ClassWrapper.new(c, true)
-          }
-          klasses1 = h1[mid] || []
-          update_p = true unless (klasses0 - klasses1).empty?
-          klasses1 |= klasses0
-          h1[mid] = klasses1
+      bug() unless update_hash.size == 2
+      update_hash.each do |(sym, mtbl)|
+        bug() unless sym == :singleton_methods || sym == :instance_methods
+        bug() unless mtbl.is_a?(Hash)
+        mtbl.each do |(k, v)|
+          bug() unless k.instance_of?(Class)
+          bug() unless v.instance_of?(Hash)
+          next if k == SingletonClass
+          # return value annotation
+          h0 = v
+          k  = ClassWrapper.new(k, sym == :instance_methods)
+          h1 = @return_value_configuration[k] || {}
+          h0.each do |(mid, klasses0)|
+            next if klasses0.include?(SingletonClass)
+            klasses0 = klasses0.map{|(c, singleton_p)|
+              bug(c) unless c.is_a?(Class)
+              bug()  unless c != SingletonClass
+              if singleton_p
+                wrapper = ClassWrapper.new(c, false)
+                bug() unless wrapper.singleton?
+              else
+                wrapper = ClassWrapper.new(c, true)
+              end
+              wrapper
+            }
+            klasses1 = h1[mid] || []
+            update_p = true unless (klasses0 - klasses1).empty?
+            klasses1 |= klasses0
+            h1[mid] = klasses1
+          end
+          @return_value_configuration[k] = h1
         end
-        @return_value_configuration[k] = h1
       end
       update_p
     end
