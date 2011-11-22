@@ -78,34 +78,33 @@ module CastOff
       class_table = {}
       bind_table = {}
       location_table = {}
-      cinfo_table = {}
+      #cinfo_table = {}
       compiled = []
-      @@autocompile_proc = lambda {|event, file, line, mid, bind, klass, cinfo|
-        return unless file
-        return if line < 0
-        return if event != 'call'
-        return if file =~ /\(/
-
+      #@@autocompile_proc = lambda {|file, line, mid, bind, klass, cinfo|
+      @@autocompile_proc = lambda {|file, line, mid, bind, klass|
+        # trace method invocation
         # TODO should handle singleton class
 
-        # trace method invocation count
-        method_table = class_table[klass]
-        unless method_table
-          method_table = Hash.new(0) 
-          class_table[klass] = method_table
-        end
+        method_table = (class_table[klass] ||= Hash.new(-1))
         count = (method_table[mid] += 1)
+        if count == 0
+          bug() unless bind.nil?
+          return true # re-call this proc with binding
+        end
         if count == 1
+          #count = @@compilation_threshold if contain_loop?(klass, mid)
+          bug() unless bind.instance_of?(Binding) || bind.nil?
           bind_table[[klass, mid]] = bind
-          location_table[[klass, mid]] = [File.expand_path(file), line]
+          location_table[[klass, mid]] = (file =~ /\(/) ? nil : [File.expand_path(file), line]
         end
-        if cinfo
-          table = (cinfo_table[[klass, mid]] ||= {})
-          table[cinfo] = true
-        end
+        #if cinfo
+          #table = (cinfo_table[[klass, mid]] ||= {})
+          #table[cinfo] = true
+        #end
         if count == @@compilation_threshold && @@compile_auto_incremental
           compiled << __autocompile(klass, mid, bind_table, location_table, compiled.size)
         end
+        false
       }
       hook_method_invocation(@@autocompile_proc)
       at_exit do
@@ -118,7 +117,7 @@ module CastOff
               targets << [klass, mid, count]
             end
           end
-          targets = sort_targets(targets, cinfo_table)
+          #targets = sort_targets(targets, cinfo_table)
           targets.each_with_index do |(klass, mid, count), index|
             dlog("#{count}: #{klass} #{mid}")
             compiled << __autocompile(klass, mid, bind_table, location_table, index)
@@ -168,7 +167,7 @@ module CastOff
         manager, configuration, suggestion = compile_iseq(iseq, mid, typemap, false, bind)
         manager.compilation_target_is_a(t, mid, false)
         set_direct_call(target, mid, target.instance_of?(Class) ? :class : :module, manager, configuration)
-        load_binary(manager, configuration, suggestion, iseq, bind)
+        load_binary(manager, configuration, suggestion, iseq)
         t = override_target(target, mid)
         dlog("override target of #{target}##{mid} is #{t}")
         __send__("register_method_#{manager.signiture}", t)
@@ -190,7 +189,7 @@ module CastOff
         manager, configuration, suggestion = compile_iseq(iseq, mid, typemap, false, bind)
         manager.compilation_target_is_a(obj, mid, true)
         set_direct_call(obj, mid, :singleton, manager, configuration)
-        load_binary(manager, configuration, suggestion, iseq, bind)
+        load_binary(manager, configuration, suggestion, iseq)
         __send__("register_singleton_method_#{manager.signiture}", obj)
         @@original_singleton_method_iseq[[obj, mid]] = iseq
         @@manager_table[manager.signiture] = manager
@@ -207,7 +206,7 @@ module CastOff
         execute_no_hook() do
           bind = block.binding
           manager, configuration, suggestion = compile_iseq(iseq, nil, typemap, false, bind)
-          load_binary(manager, configuration, suggestion, iseq, bind)
+          load_binary(manager, configuration, suggestion, iseq)
           @@loaded_binary[key] = manager.signiture
         end
       end
@@ -321,6 +320,7 @@ Currently, CastOff cannot compile method which source file is not exist.
       target = compilation_target.target_object
       mid = compilation_target.method_id
       singleton = compilation_target.singleton_method?
+      return false unless CastOff.use_base_configuration?
       vlog("re-compile(#{target}#{singleton ? '.' : '#'}#{mid}): update_p = #{update_p}, reciever_result = #{reciever_result}, return_value_result = #{return_value_result}")
       return false unless update_p
       ann = manager.load_annotation() || {}
@@ -474,7 +474,57 @@ Currently, CastOff cannot compile method which source file is not exist.
       end
     end
 
-    def __autocompile(klass, mid, bind_table, location_table, index)
+    def contain_loop?(klass, mid)
+      case compilation_target_type(klass, mid)
+      when :singleton_method
+        singleton_p = true
+      when :instance_method
+        singleton_p = false
+      when nil
+        return false
+      else
+        bug()
+      end
+      begin
+        iseq = get_iseq(klass, mid, singleton_p)
+      rescue UnsupportedError
+        return false
+      end
+      bug() unless iseq.instance_of?(RubyVM::InstructionSequence)
+      a = iseq.to_a
+      filepath, line_no = *a.slice(7, 2)
+      body = a.last
+      pc = 0
+      body.each do |insn|
+        next unless insn.instance_of?(Array)
+        op = insn.first
+        case op
+        when :jump, :branchif, :branchunless
+          dst = insn[1]
+          m = (/label_/).match(dst)
+          bug() unless m
+          dst = m.post_match.to_i
+          if dst < pc
+            vlog("#{klass}#{singleton_p ? '.' : '#'}#{mid} contains backedge:  #{filepath}(#{line_no})")
+            return true
+          end
+        when :send
+          case insn[3] # blockiseq
+          when NilClass
+            # nothing to do
+          when Array
+            vlog("#{klass}#{singleton_p ? '.' : '#'}#{mid} has block: #{filepath}(#{line_no})")
+            return true
+          else
+            bug()
+          end
+        end
+        pc += insn.size
+      end
+      false
+    end
+
+    def compilation_target_type(klass, mid)
       return nil unless klass.instance_of?(Class) || klass.instance_of?(Module) # FIXME
       return nil if klass.name =~ /CastOff/ # ここで弾いておかないと、__compile の require で __load が走る。
                                             # Namespace のほうはあらかじめ require しておくことで回避。
@@ -486,14 +536,29 @@ Currently, CastOff cannot compile method which source file is not exist.
         return nil unless klass.singleton_methods(false).include?(mid)
         singleton = true
       end
+      singleton ? :singleton_method : :instance_method
+    end
+
+    def __autocompile(klass, mid, bind_table, location_table, index)
+      case compilation_target_type(klass, mid)
+      when :singleton_method
+        singleton = true
+      when :instance_method
+        singleton = false
+      when nil
+        return nil
+      else
+        bug()
+      end
       begin
+        location = location_table[[klass, mid]]
+        return nil unless location
         bind = bind_table[[klass, mid]]
         if singleton
           CastOff.compile_singleton_method(klass, mid, bind)
         else
           CastOff.compile(klass, mid, bind)
         end
-        location = location_table[[klass, mid]]
         begin
           Marshal.dump(klass)
         rescue TypeError => e
@@ -553,11 +618,12 @@ Currently, CastOff cannot compile method which source file is not exist.
           bug() unless val0.is_a?(Hash)
           reciever_result[key0] = val0.to_a
         when TrueClass, FalseClass
-          mtbl = return_value_result[(key0 ? :singleton_methods : :instance_methods)]
+          sym = key0 ? :singleton_methods : :instance_methods
+          mtbl = return_value_result[sym]
           bug() unless mtbl.is_a?(Hash)
           bug() unless val0.is_a?(Hash)
           val0.each do |(klass, midtbl)|
-            bug() unless klass.is_a?(Class)
+            bug() unless klass.is_a?(Class) || (klass.is_a?(Module) && sym == :singleton_methods)
             bug() unless midtbl.is_a?(Hash)
             newval = {}
             midtbl.each do |(key1, val1)|
@@ -605,9 +671,10 @@ Currently, CastOff cannot compile method which source file is not exist.
         __send__("register_sampling_table_#{manager.signiture}", h)
         suggestion.add_handler do
           reciever_result, return_value_result = parse_sampling_table(h)
-          update_base_configuration(manager, reciever_result, return_value_result)
+          up = update_base_configuration(manager, reciever_result, return_value_result)
+          vlog("update base configuration = #{up}")
           if reciever_result.size > 0
-            msg = "These are unresolved local variables sampling results."
+            msg = "These are profiling results of unresolved local variables."
             ary = []
             reciever_result.each do |key0, val0|
               bug() unless key0.is_a?(Symbol)
@@ -615,8 +682,14 @@ Currently, CastOff cannot compile method which source file is not exist.
               val0.each do |(klass, singleton_p)|
                 kstr = klass.to_s
                 if singleton_p
-                  bug() unless klass.is_a?(Class)
-                  kstr = "Class<#{kstr}>"
+                  case klass # 変数名が klass だとわかりにくいので、変更すること
+                  when Class
+                    kstr = "Class<#{kstr}>"
+                  when Module
+                    kstr = "Module<#{kstr}>"
+                  else
+                    bug()
+                  end
                 end
                 ary << [key0.to_s, kstr]
               end
@@ -624,20 +697,26 @@ Currently, CastOff cannot compile method which source file is not exist.
             suggestion.add_suggestion(msg, ["<Variable>", "<SamplingResultClass>"], ary)
           end
           if return_value_result.size > 0
-            msg = "These are unresolved method return values sampling results."
+            msg = "These are profiling results of unresolved method return values."
             ary = []
             return_value_result.each do |sym, mtbl|
               bug() unless sym == :singleton_methods || sym == :instance_methods
               bug() unless mtbl.is_a?(Hash)
               mtbl.each do |key0, val0|
-                bug() unless key0.is_a?(Class)
+                bug() unless key0.is_a?(Class) || (key0.is_a?(Module) && sym == :singleton_methods)
                 bug() unless val0.is_a?(Hash)
                 val0.each do |(mid, classes)|
                   classes.each do |(klass, singleton_p)|
                     kstr = klass.to_s
                     if singleton_p
-                      bug() unless klass.is_a?(Class)
-                      kstr = "Class<#{kstr}>"
+                      case klass # 変数名が klass だとわかりにくいので、変更すること
+                      when Class
+                        kstr = "Class<#{kstr}>"
+                      when Module
+                        kstr = "Module<#{kstr}>"
+                      else
+                        bug()
+                      end
                     end
                     ary << ["#{key0}#{sym == :singleton_methods ? '.' : '#'}#{mid}", kstr]
                   end
@@ -653,14 +732,15 @@ Currently, CastOff cannot compile method which source file is not exist.
           s1 = configuration.to_s
           configuration.compact()
           s2 = configuration.to_s
+          vlog("update configuration = #{update_p}")
           if update_p
-            bug() if s0 == s1
+            update_p = false if s0 == s1 # ignore configuration が更新されたときにここに来る
           else
             bug() if s0 != s1
           end
           if update_p
-            suggestion.add_suggestion("You specify following type map to CastOff", ["Your Annotation"], [[s0]], false)
-            suggestion.add_suggestion("CastOff suggests you to use following type map", ["CastOff Suggestion"], [[s2]], false)
+            suggestion.add_suggestion("You specified following type information to CastOff", ["Your Annotation"], [[s0]], false)
+            suggestion.add_suggestion("CastOff suggests you to use following type information", ["CastOff Suggestion"], [[s2]], false)
           end
         end
       end
@@ -680,7 +760,7 @@ Currently, CastOff cannot compile method which source file is not exist.
       dep.hook(function_pointer_initializer)
     end
 
-    def load_binary(manager, configuration, suggestion, iseq, bind)
+    def load_binary(manager, configuration, suggestion, iseq)
       so = manager.compiled_binary
       sign = manager.signiture
       bug("#{so} is not exist") unless File.exist?(so)
@@ -692,7 +772,10 @@ Currently, CastOff cannot compile method which source file is not exist.
       set_sampling_table(suggestion, manager, configuration)
       suggestion.dump_at_exit()
       __send__(function_pointer_initializer)
-      __send__("prefetch_constants_#{sign}", bind) if bind
+      if configuration.prefetch_constant?
+        bug() unless configuration.bind.instance_of?(Configuration::BindingWrapper)
+        __send__("prefetch_constants_#{sign}", configuration.bind.bind)
+      end
     end
 
     def capture_instruction()

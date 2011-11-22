@@ -606,11 +606,7 @@ Call site is (#{insn}).
         bug()
       end
 
-      def propergate_value_which_can_not_unbox(defs)
-        bug()
-      end
-
-      def propergate_unbox_value(defs)
+      def propergate_boxed_value(defs)
         bug()
       end
       ### unboxing end ###
@@ -746,7 +742,15 @@ Call site is (#{insn}).
           return [target]
         when Variable
           ds = @information.definition_of(target)
-          bug() if ds.empty?
+          if ds.empty?
+            case target
+            when TmpBuffer, Pointer, Argument, Self
+              return []
+            else
+              bug() unless @information.undefined_variables.include?(target)
+              return [] # FIXME
+            end
+          end
           ary = []
           ds.each do |d|
             case d
@@ -788,6 +792,12 @@ Call site is (#{insn}).
             bug()
           end
         }.join("\n")
+      end
+
+      def get_variable(v)
+        bug() unless v.is_a?(Variable)
+        bug() unless @information
+        @information.get_variable(v)
       end
 
       def dispatch_method?

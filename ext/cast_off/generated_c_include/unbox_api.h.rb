@@ -14,15 +14,52 @@ __END__
 #else
 #define CFIX2RFIX(b) LONG2FIX((b))
 #endif
+static inline VALUE CDOUBLE2RINT(double f)
+{
+  if (f > 0.0) f = floor(f);
+  if (f < 0.0) f = ceil(f);
+  return FIXABLE(f) ? LONG2FIX((double)f) : rb_dbl2big(f);
+}
+
 %# arg size, [type0, type1, ...]
-%[['float_float',
+%[['float',
+%  {'-' => 'uminus'},
+%  0,
+%  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
+%  {},
+%  {'VALUE' => 'DBL2NUM', 'double' => ''}],
+% ['float',
+%  {'' => 'to_f'},
+%  0,
+%  {'VALUE' => ''},
+%  {},
+%  {'VALUE' => '', 'double' => 'RFLOAT_VALUE'}],
+% ['float',
+%  {'' => 'to_i'},
+%  0,
+%  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
+%  {},
+%  {'VALUE' => 'CDOUBLE2RINT'}],
+% ['fixnum',
+%  {'-' => 'uminus'},
+%  0,
+%  {'VALUE' => 'FIX2LONG', 'long' => ''},
+%  {},
+%  {'VALUE' => 'CFIX2RFIX', 'long' => ''}],
+% ['fixnum',
+%  {'(double)' => 'to_f'},
+%  0,
+%  {'VALUE' => 'FIX2LONG', 'long' => ''},
+%  {},
+%  {'VALUE' => 'DBL2NUM', 'double' => ''}],
+% ['float_float',
 %  {'+' => 'plus', '-' => 'minus', '*' => 'mult', '/' => 'div'},
 %  1,
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {'VALUE' => 'DBL2NUM', 'double' => ''}],
 % ['float_float',
-%  {'>' => 'gt', '>=' => 'ge', '<' => 'lt', '<=' => 'le'},
+%  {'>' => 'gt', '>=' => 'ge', '<' => 'lt', '<=' => 'le', '==' => 'eq', '==' => 'eqq'},
 %  1,
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
@@ -39,12 +76,24 @@ __END__
 %  {'VALUE' => '(double)FIX2LONG', 'long' => ''},
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {'VALUE' => 'DBL2NUM', 'double' => ''}],
+% ['fixnum_float',
+%  {'>' => 'gt', '>=' => 'ge', '<' => 'lt', '<=' => 'le', '==' => 'eq', '==' => 'eqq'},
+%  1,
+%  {'VALUE' => '(double)FIX2LONG', 'long' => ''},
+%  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
+%  {'VALUE' => 'CBOOL2RBOOL'}],
 % ['float_fixnum',
 %  {'+' => 'plus', '-' => 'minus', '*' => 'mult', '/' => 'div'},
 %  1,
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {'VALUE' => '(double)FIX2LONG', 'long' => ''},
-%  {'VALUE' => 'DBL2NUM', 'double' => ''}]].each do |(function_name, h, argc, reciever_converter, arguments_converter, return_value_converter)|
+%  {'VALUE' => 'DBL2NUM', 'double' => ''}],
+% ['float_fixnum',
+%  {'>' => 'gt', '>=' => 'ge', '<' => 'lt', '<=' => 'le', '==' => 'eq', '==' => 'eqq'},
+%  1,
+%  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
+%  {'VALUE' => '(double)FIX2LONG', 'long' => ''},
+%  {'VALUE' => 'CBOOL2RBOOL'}]].each do |(function_name, h, argc, reciever_converter, arguments_converter, return_value_converter)|
 %  arguments_decls = arguments_converter.keys
 %  reciever_decls  = reciever_converter.keys
 %  return_value_decls  = return_value_converter.keys
@@ -68,7 +117,12 @@ __END__
 static inline <%= return_value %>
 cast_off_inline_<%= function_name %>_<%= name %>_<%= suffix %>(<%= parameter.join(', ') %>)
 {
+%      if argc > 0
   return <%= return_value_converter[return_value] %>(<%= statement.join(" #{operator} ") %>);
+%      else
+%        raise unless statement.size == 1
+  return <%= return_value_converter[return_value] %>(<%= operator %>(<%= statement.first %>));
+%      end
 }
 %    end
 %  end

@@ -14,16 +14,12 @@ module CastOff
 %  top = @insn.iseq
 %  a = [@insn.iseq]
 %  a = @insn.iseq.ancestors.reverse + a if @translator.inline_block?
-%  stacks = a.map{|s| s.depth}
-%  stacks.shift
-%  stacks.push(@insn.depth)
-%  stacks = stacks.zip(a.map{|s| s.depth}).map{|d0, d1| d0 - d1}
-%  valid = @translator.inline_block? ? @insn.depth : (@insn.depth - @insn.iseq.depth)
-%  bug() unless stacks.inject(0){|sum, d| sum + d} == valid
 %  a.each_with_index do |s, idx|
   {
-%    local_c = s.lvars.size()
-%    stack_c = stacks[idx]
+%    bug() unless @dependent_local_variables[s]
+%    bug() unless @dependent_stack_variables[s]
+%    local_c = @dependent_local_variables[s].size()
+%    stack_c = @dependent_stack_variables[s].size()
 %    if @translator.inline_block?
     int local_c = <%= local_c %>;
     VALUE local_v[<%= local_c %>];
@@ -31,13 +27,13 @@ module CastOff
     int stack_c = <%= stack_c %>;
     VALUE stack_v[<%= stack_c %>];
     rb_iseq_t *iseq = <%= s %>;
-%    s.lvars.each_with_index do |(var_name, var_id, op_idx, depth, var_annotation), i|
+%    @dependent_local_variables[s].each_with_index do |v, i|
 %      if @translator.inline_block?
-    local_v[<%= i %>] = local<%= var_id %>_<%= var_name %>; /* FIXME */
+    local_v[<%= i %>] = <%= get_variable(v).boxed_form %>;
 %      end
 %    end
-%    stack_c.times do |i|
-    stack_v[<%= i %>] = tmp<%= s.depth + i %>;
+%    @dependent_stack_variables[s].each_with_index do |v, i|
+    stack_v[<%= i %>] = <%= get_variable(v).boxed_form %>;
 %    end
 %    method_p = (s.itype == :method ? 1 : 0)
 %    lambda_p = (s.itype == :method ? 0 : 'lambda_p')
@@ -100,30 +96,44 @@ static void <RECOMPILATION_FUNCTION_NAME>(VALUE obj)
 #if 1
   if(!sampling_table) register_sampling_table(rb_hash_new());
 %  count = 0
-%  defs = get_definition(@guard_value)
-%  defs.each do |defn|
-%    case defn
-%    when SubIR
-%      case defn.src
-%      when LocalVariable, DynamicVariable, InstanceVariable, ClassVariable, GlobalVariable, Self
-%        count += 1
+%  done = []
+%  queue = [@guard_value]
+%  while (val = queue.pop)
+%    bug() if done.include?(val)
+%    done << val
+%    bug() unless val.is_a?(Variable)
+%    defs = get_definition(val)
+%    defs.each do |defn|
+%      case defn
+%      when SubIR
+%        case defn.src
+%        when LocalVariable, DynamicVariable, InstanceVariable, ClassVariable, GlobalVariable, Self
+%          count += 1
   sampling_variable(obj, ID2SYM(rb_intern("<%= defn.src.source %>")));
-%      when ConstWrapper
-%        # Fixme
+%          if !queue.include?(defn.src) && !done.include?(defn.src)
+%            dlog("add recompilation queue \#{defn.src}")
+%            queue << defn.src
+%          end
+%        when ConstWrapper
+%          # Fixme
   /* <%= defn.src.path %> */
-%      when Literal
-%        # nothing to do
-%      else
-%        bug(defn.src)
-%      end
-%    when InvokeIR
-%      recv = defn.param_variables.first
-%      bug() if recv.dynamic?
-%      recv.types.each do |k|
-%        recv_class = @translator.get_c_classname(k)
-%        bug() unless recv_class
-%        count += 1
+%        when Literal, Argument, TmpBuffer
+%          # nothing to do
+%        else
+%          bug(defn.src)
+%        end
+%      when InvokeIR
+%        recv = defn.param_variables.first
+%        if recv.dynamic?
+%          bug() if val == @guard_value
+%          next
+%        end
+%        recv.types.each do |k|
+%          recv_class = @translator.get_c_classname(k)
+%          bug() unless recv_class
+%          count += 1
   __sampling_poscall(obj, <%= recv_class %>, ID2SYM(rb_intern("<%= defn.method_id %>")));
+%        end
 %      end
 %    end
 %  end
@@ -244,7 +254,9 @@ static int <CLASS_CHECK_FUNCTION_NAME>_failed(VALUE obj, VALUE klass)
         @variables << @guard_value
         @variables_without_result << @guard_value
         @result_variable = nil
-        @dependent_variables = get_dependent_variables(vars)
+        @dependent_local_variables = get_dependent_local_variables(vars)
+        @dependent_stack_variables = get_dependent_stack_variables(vars)
+        @dependent_variables = @dependent_local_variables.values.flatten + @dependent_stack_variables.values.flatten
         @source = @insn.source
         @source = @source.empty? ? nil : @source
         @source_line = @insn.line.to_s
@@ -252,57 +264,36 @@ static int <CLASS_CHECK_FUNCTION_NAME>_failed(VALUE obj, VALUE klass)
 
       ### unboxing begin ###
       def unboxing_prelude()
-        # TODO inline api の返り値で unbox 可能なものは、class_exact にして伝播させること。
-        if @guard_value.class_exact? && @guard_value.can_unbox?
-          @guard_value.can_unbox()
-        else
-          @guard_value.can_not_unbox()
-        end
+        @guard_value.box() unless @guard_value.class_exact? && @guard_value.can_unbox?
       end
 
-      def propergate_value_which_can_not_unbox(defs)
+      def propergate_boxed_value(defs)
         change = false
 
         # forward
-        change |= defs.can_not_unbox_variable_resolve_forward(@guard_value)
-
-        # backward
-        if @guard_value.can_not_unbox?
-          change |= defs.can_not_unbox_variable_resolve_backward(@guard_value)
-          if @configuration.deoptimize?
-            @dependent_variables.each do |v|
-              change |= v.can_not_unbox()
-            end
-          end
-        end
-
-        change
-      end
-
-      def propergate_box_value(defs)
-        change = false
-
-        # forward
-        change |= defs.box_value_resolve_forward(@guard_value)
+        change |= defs.propergate_boxed_value_forward(@guard_value)
 
         # backward
         if @guard_value.boxed?
-          change |= defs.box_value_resolve_backward(@guard_value)
+          change |= defs.propergate_boxed_value_backward(@guard_value)
           if @configuration.deoptimize?
-            @dependent_variables.each do |v|
-              v.box()
-              change |= defs.box_value_resolve_backward(v)
+            @dependent_variables.each do |var|
+              if var.is_a?(DynamicVariable)
+                bug() unless var.boxed?
+                next
+              end
+              vars = defs.get_variables(var)
+              boxed_p = !!vars.find{|v| v.boxed?}
+              next unless boxed_p
+              vars.each do |v|
+                change |= v.box()
+                change |= defs.propergate_boxed_value_backward(v)
+              end
             end
           end
         end
 
         change
-      end
-
-      def propergate_unbox_value(defs)
-        return false if @guard_value.can_not_unbox?
-        bug() unless @guard_value.class_exact?
-        defs.unbox_value_resolve(@guard_value)
       end
       ### unboxing end ###
 
@@ -357,29 +348,54 @@ static int <CLASS_CHECK_FUNCTION_NAME>_failed(VALUE obj, VALUE klass)
         "  }"
       end
 
-      def get_dependent_variables(vars)
-        targets = []
+      def get_dependent_local_variables(vars)
+        local_variables = {}
         s = @insn.iseq
         level = @insn.iseq.generation
         while s
+          variables = []
           s.lvars.each do |var_name, var_id, op_idx, depth, var_annotation|
             bug() unless depth == level
             if @translator.inline_block?
-              targets << "local#{var_id}_#{var_name}" # FIXME
+              var = vars.find{|v| v.to_name == "local#{var_id}_#{var_name}"} # FIXME
             else
-              targets << "dfp#{depth}[#{op_idx}]" # FIXME
+              var = vars.find{|v| v.to_name == "dfp#{depth}[#{op_idx}]"} # FIXME
             end
+            bug() unless var.is_a?(LocalVariable) || var.is_a?(DynamicVariable)
+            variables << var
           end
+          local_variables[s] = variables
           level -= 1
           s = s.parent
         end
         bug() unless level == -1
-        d = @insn.depth
-        while d > 0 do
-          d -= 1
-          targets << "tmp#{d}" # FIXME
+        bug() unless local_variables.size == (@insn.iseq.generation + 1)
+        local_variables
+      end
+
+      def get_dependent_stack_variables(vars)
+        stack_variables = {}
+        a = [@insn.iseq]
+        a = @insn.iseq.ancestors.reverse + a if @translator.inline_block?
+        stacks = a.map{|s| s.depth}
+        stacks.shift
+        stacks.push(@insn.depth)
+        stacks = stacks.zip(a.map{|s| s.depth}).map{|d0, d1| d0 - d1}
+        valid = @translator.inline_block? ? @insn.depth : (@insn.depth - @insn.iseq.depth)
+        bug() unless stacks.inject(0){|sum, d| sum + d} == valid
+        a.each_with_index do |s, idx|
+          stack_c = stacks[idx]
+          variables = []
+          stack_c.times do |i|
+            var = vars.find{|v| v.to_name == "tmp#{s.depth + i}"} # FIXME
+            bug() unless var.is_a?(TmpVariable)
+            variables << var
+          end
+          bug() unless variables.size == stack_c
+          stack_variables[s] = variables
         end
-        vars.select{|v| targets.include?(v.to_name)}.uniq()
+        bug() unless stack_variables.size == a.size
+        stack_variables
       end
     end
 

@@ -811,9 +811,14 @@ static VALUE cast_off_class_wrapper_each_method_search_target(VALUE self, VALUE 
       rb_yield(module);
     } else if (TYPE(klass) == T_CLASS) {
       if (FL_TEST(klass, FL_SINGLETON)) {
-        rb_bug("cast_off_class_wrapper_each_method_search_target: should not be reached(2)");
+        VALUE __klass = rb_iv_get(klass, "__attached__");
+        if (rb_class_of(__klass) != klass) {
+          rb_bug("cast_off_class_wrapper_each_method_search_target: should not be reached(2)");
+        }
+        rb_yield(rb_funcall(rb_cCastOffClassWrapper, rb_intern("new"), 2, __klass, Qfalse));
+      } else {
+        rb_yield(klass);
       }
-      rb_yield(klass);
     } else {
       rb_bug("cast_off_class_wrapper_each_method_search_target: should not be reached(3)");
     }
@@ -1239,27 +1244,14 @@ static VALUE caller_info(rb_thread_t *th)
 
 static void cast_off_method_invocation_handler(rb_event_flag_t event, VALUE proc, VALUE self, ID id, VALUE klass)
 {
-  VALUE thval = rb_thread_current();
-  rb_thread_t *th = DATA_PTR(thval);
-  const char *srcfile = rb_sourcefile();
-  VALUE filename = srcfile ? rb_str_new2(srcfile) : Qnil;
+  const char *srcfile;
+  VALUE filename, need_binding;
   VALUE argv[6];
-  int line = rb_sourceline();
-  static VALUE ev = 0;
-
-  if (!ev) {
-    ev = rb_str_new2("call");
-    rb_gc_register_mark_object(ev);
-  }
+  int line;
 
   if (klass == 0) {
     rb_frame_method_id_and_class(&id, &klass);
   }
-
-  if (id == ID_ALLOCATOR) {
-    return;
-  }
-
   if (klass) {
     if (TYPE(klass) == T_ICLASS) {
       klass = RBASIC(klass)->klass;
@@ -1267,16 +1259,36 @@ static void cast_off_method_invocation_handler(rb_event_flag_t event, VALUE proc
       klass = rb_iv_get(klass, "__attached__");
     }
   }
+  if (!klass) return;
 
-  argv[0] = ev;
-  argv[1] = filename;
-  argv[2] = INT2FIX(line);
-  argv[3] = id ? ID2SYM(id) : Qnil;
-  argv[4] = (self && srcfile) ? rb_binding_new() : Qnil;
-  argv[5] = klass ? klass : Qnil;
-  argv[6] = caller_info(th);
+  if (id == ID_ALLOCATOR) {
+    return;
+  }
+  if (!id) return;
 
-  rb_proc_call_with_block(proc, 7, argv, Qnil);
+  srcfile = rb_sourcefile();
+  if (!srcfile) return;
+  filename = rb_str_new2(srcfile);
+
+  line = rb_sourceline();
+  if (line < 0) return;
+
+  argv[0] = filename;
+  argv[1] = INT2FIX(line);
+  argv[2] = ID2SYM(id);
+  argv[3] = Qnil;
+  argv[4] = klass;
+  /* argv[5] = caller_info(th); */
+
+  /* rb_proc_call_with_block(proc, 6, argv, Qnil); */
+  need_binding = rb_proc_call_with_block(proc, 5, argv, Qnil);
+  if (RTEST(need_binding)) {
+    argv[3] = (self && srcfile) ? rb_binding_new() : Qnil;
+    need_binding = rb_proc_call_with_block(proc, 5, argv, Qnil);
+  }
+  if (RTEST(need_binding)) {
+    rb_bug("cast_off_method_invocation_handler: should not be reached");
+  }
 
   return;
 }
@@ -1361,6 +1373,30 @@ VALUE cast_off_singleton_method_added_p(VALUE dummy)
     return Qtrue;
   }
   rb_bug("cast_off_singleton_method_added_p: should not be reached(1)");
+}
+
+static ID id_include, id_extend;
+VALUE cast_off_extend_p(VALUE dummy)
+{
+  VALUE thval = rb_thread_current();
+  rb_thread_t *th = DATA_PTR(thval);
+  rb_control_frame_t *cfp;
+  ID mid;
+
+  cfp = th->cfp; /* this method frame */
+  cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp); /* method_added or singleton_method_added frame */
+  if (!cfp->me) {
+    rb_bug("cast_off_extend_p: should not be reached(0)");
+  }
+  mid = cfp->me->called_id;
+  if (mid == id_include) {
+    return Qfalse;
+  }
+  if (mid == id_extend) {
+    return Qtrue;
+  }
+  /* TODO 別名に対応 */
+  rb_bug("cast_off_extend_p: should not be reached(1)");
 }
 
 /* for deoptimization */
@@ -1470,10 +1506,13 @@ void Init_cast_off(void)
 
   id_method_added = rb_intern("method_added");
   id_singleton_method_added = rb_intern("singleton_method_added");
+  id_include = rb_intern("include");
+  id_extend = rb_intern("extend");
   id_initialize_copy = rb_intern("initialize_copy");
   id_clone = rb_intern("clone");
   rb_define_singleton_method(rb_cCastOffDependency, "ignore_overridden?", cast_off_ignore_overridden_p, 2);
   rb_define_singleton_method(rb_cCastOffDependency, "singleton_method_added?", cast_off_singleton_method_added_p, 0);
+  rb_define_singleton_method(rb_cCastOffDependency, "extend?", cast_off_extend_p, 0);
 
   rb_define_singleton_method(rb_mCastOffCompiler, "destroy_last_finish", cast_off_destroy_last_finish, 0);
   rb_funcall(rb_mCastOffCompiler, rb_intern("module_eval"), 1, rb_str_new2("def self.vm_exec(); destroy_last_finish() end"));

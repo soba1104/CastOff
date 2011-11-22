@@ -101,7 +101,7 @@ module CastOff::Compiler
     end
 
     def all_pointer()
-      ptrs = all_pointer_definition().map{|ir| ir.result_variable}.uniq()
+      ptrs = all_ir.map{|ir| ir.variables}.flatten.select{|v| v.is_a?(Pointer)}.uniq()
       bug() if ptrs.find{|p| not p.is_a?(Pointer)}
       ptrs.freeze()
     end
@@ -130,6 +130,9 @@ module CastOff::Compiler
       achieved.each do |aliveblock|
         aliveblock.pre.reject!{|b| deadblocks.include?(b)}
         bug() if aliveblock.next.find{|b| deadblocks.include?(b)}
+      end
+      deadblocks.each do |b|
+        b.iseq.delete_labels(b.labels)
       end
       @blocks = achieved
       @blocks.sort! {|a, b| a.number <=> b.number}
@@ -239,60 +242,23 @@ module CastOff::Compiler
 
     ### unboxing begin ###
     def unboxing()
-      # 1: mark value which can not unbox
-      # 1: mark value which can unbox
       irs = all_ir()
       irs.each{|ir| ir.unboxing_prelude()}
-      bug() if irs.map{|ir| ir.values }.flatten.find{|v| v.box_unbox_undefined? }
 
-      # 2: propergate value which can not unbox
       change = true
       while change
         change = false
         @blocks.each do |b|
           defs = b.information.dup
           b.irs.each do |ir|
-            change |= ir.propergate_value_which_can_not_unbox(defs)
+            change |= ir.propergate_boxed_value(defs)
             defs.step(ir)
           end
         end
       end
-      bug() if irs.find{|ir| ir.instance_of?(SubIR) && ir.dst.can_not_unbox? != ir.src.can_not_unbox?}
+      bug() if irs.map{|ir| ir.values }.flatten.find{|v| v.unboxed? && !v.can_unbox?}
 
-      # 3: propergate value which can unbox
-      change = true
-      while change
-        change = false
-        @blocks.each do |b|
-          defs = b.information.dup
-          b.irs.each do |ir|
-            change |= ir.propergate_unbox_value(defs)
-            defs.step(ir)
-          end
-        end
-      end
-
-      bug() if irs.map{|ir| ir.values }.flatten.find{|v| v.unboxed? && (v.dynamic? || v.types.size != 1)}
-      irs.each do |ir|
-        ir.values.each do |v|
-          next unless v.unboxed?
-        end
-      end
-
-      irs.map{|ir| ir.values}.flatten.each{|v| v.box() unless v.unboxed?}
-      irs.map{|ir| ir.values}.flatten.each{|v| bug() if !v.boxed? && !v.unboxed?}
-      change = true
-      while change
-        change = false
-        @blocks.each do |b|
-          defs = b.information.dup
-          b.irs.each do |ir|
-            change |= ir.propergate_box_value(defs)
-            defs.step(ir)
-          end
-        end
-      end
-
+      # validation
       @blocks.each do |b|
         defs = b.information.dup
         b.irs.each do |ir|

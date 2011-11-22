@@ -165,6 +165,20 @@ module CastOff::Compiler
         @undefs
       end
 
+      def get_variables(var)
+        check_initialize()
+        ds = @definition.select{|d| var == d.result_variable }
+        bug() if ds.empty?
+        ds.map{|d| d.result_variable}
+      end
+
+      def get_variable(var)
+        vars = get_variables(var)
+        boxed_p = vars.first.boxed?
+        bug() if boxed_p ? vars.find{|v| v.unboxed?} : vars.find{|v| v.boxed?}
+        vars.first
+      end
+
       def mark(var)
         check_initialize()
         ds = @definition.select {|d| var == d.result_variable }
@@ -221,55 +235,13 @@ module CastOff::Compiler
       end
 
       ### unboxing begin ###
-      def can_not_unbox_variable_resolve_forward(var)
+      def propergate_boxed_value_forward(var)
         check_initialize()
-        return false if var.can_not_unbox?
-        ds = @definition.select {|d| var == d.result_variable }
-        if ds.empty?
-          case var
-          when TmpBuffer, Pointer, Argument, Self, ConstWrapper, Literal
-            return false
-          else
-            bug(var)
-          end
-        end
-        ds.each do |d|
-          if d.result_variable.can_not_unbox?
-            var.can_not_unbox()
-            return true
-          end
-        end
-        return false
-      end
-
-      def can_not_unbox_variable_resolve_backward(var)
-        check_initialize()
-        bug() unless var.can_not_unbox?
-        ds = @definition.select {|d| var == d.result_variable }
-        if ds.empty?
-          case var
-          when TmpBuffer, Pointer, Argument, Self, ConstWrapper, Literal
-            return false
-          else
-            bug(var)
-          end
-        end
-        ds.inject(false){|change, d| d.result_variable.can_not_unbox() || change}
-      end
-
-      def box_value_resolve_forward(var)
-        check_initialize()
-        bug() if !var.unboxed? && !var.boxed?
         return false if var.boxed?
         ds = @definition.select {|d| var == d.result_variable }
         if ds.empty?
-          case var
-          when TmpBuffer, Pointer, Argument, Self, ConstWrapper, Literal
-            #bug(var)
-            return false
-          else
-            bug(var)
-          end
+          bug(var) unless var.is_a?(Literal) # should be boxed => TmpBuffer, Pointer, Argument, Self, ConstWrapper
+          return false
         end
         ds.each do |d|
           if d.result_variable.boxed?
@@ -280,7 +252,7 @@ module CastOff::Compiler
         return false
       end
 
-      def box_value_resolve_backward(var)
+      def propergate_boxed_value_backward(var)
         check_initialize()
         bug() unless var.boxed?
         ds = @definition.select {|d| var == d.result_variable }
@@ -293,35 +265,6 @@ module CastOff::Compiler
           end
         end
         ds.inject(false){|change, d| d.result_variable.box() || change}
-      end
-
-      def unbox_value_resolve(var)
-        check_initialize()
-        bug() if var.can_not_unbox?
-        return false if var.unboxed?
-        ds = @definition.select {|d| var == d.result_variable }
-        if ds.empty?
-          case var
-          when TmpBuffer, Pointer, Argument, Self, ConstWrapper, Literal
-            return false
-          else
-            bug(var)
-          end
-        end
-        c = nil
-        ds.each do |d|
-          v = d.result_variable
-          return false unless v.unboxed?
-          bug() if v.dynamic?
-          bug() unless v.types.size == 1
-          if c
-            bug() unless c == v.types[0]
-          else
-            c = v.types[0]
-          end
-        end
-        var.unbox()
-        true
       end
       ### unboxing end ###
 
@@ -431,6 +374,7 @@ module CastOff::Compiler
           other.condition.each do |(v, p)|
             tmp.delete(v) if !tmp[v] || (tmp[v] && tmp[v] != p)
           end
+          (tmp.keys - other.condition.keys).each{|v| tmp.delete(v)}
         else
           tmp = other.condition.dup
         end

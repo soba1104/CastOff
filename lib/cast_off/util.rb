@@ -43,11 +43,13 @@ module CastOff::Util
     STDERR.puts("<<< TODO #{message} :#{caller[0]} >>>")
     bt_and_bye()
   end
+  public(:todo)
 
   def bug(message = nil)
     STDERR.puts("<<< BUG #{message} :#{caller[0]} >>>")
     bt_and_bye()
   end
+  public(:bug)
 
 =begin
   def method_missing(name, *args, &block)

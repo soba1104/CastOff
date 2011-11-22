@@ -87,7 +87,7 @@ static void sampling_variable(VALUE val, VALUE sym)
   /* :variable => [klass0, klass1, ...] */
   VALUE klass = rb_class_of(val);
   VALUE hashval;
-  VALUE singleton_class_obj_p = Qfalse;
+  VALUE singleton_class_or_module_obj_p = Qfalse;
   st_table *hash;
 
   if (!st_lookup(sampling_table, (st_data_t)sym, (st_data_t*)&hashval)) {
@@ -97,16 +97,16 @@ static void sampling_variable(VALUE val, VALUE sym)
   hash = RHASH_TBL(hashval);
 
   if (FL_TEST(klass, FL_SINGLETON)) {
-    if (rb_obj_class(val) == rb_cClass) {
+    if (rb_obj_class(val) == rb_cClass || rb_obj_class(val) == rb_cModule) {
       klass = val;
-      singleton_class_obj_p = Qtrue;
+      singleton_class_or_module_obj_p = Qtrue;
     } else {
       klass = rb_cCastOffSingletonClass;
     }
   }
 
   if (!st_lookup(hash, (st_data_t)klass, 0)) {
-    st_insert(hash, (st_data_t)klass, (st_data_t)singleton_class_obj_p);
+    st_insert(hash, (st_data_t)klass, (st_data_t)singleton_class_or_module_obj_p);
   }
 
   return;
@@ -116,23 +116,23 @@ static void __sampling_poscall(VALUE val, VALUE method_klass, VALUE method_id)
 {
   VALUE klass;
   VALUE mtblval, method_id_hashval, hashval;
-  VALUE singleton_class_obj_p = Qfalse;
-  VALUE class_method_p = Qfalse;
+  VALUE singleton_class_or_module_obj_p = Qfalse;
+  VALUE class_method_or_module_function_p = Qfalse;
   st_table *mtbl, *method_id_hash, *hash;
 
   if (FL_TEST(method_klass, FL_SINGLETON)) {
     VALUE recv = rb_ivar_get(method_klass, rb_intern("__attached__"));
-    if (rb_obj_class(recv) == rb_cClass && rb_class_of(recv) == method_klass) {
+    if ((rb_obj_class(recv) == rb_cClass || rb_obj_class(recv) == rb_cModule) && rb_class_of(recv) == method_klass) {
       method_klass = recv;
-      class_method_p = Qtrue;
+      class_method_or_module_function_p = Qtrue;
     } else {
       method_klass = rb_cCastOffSingletonClass;
     }
   }
 
-  if (!st_lookup(sampling_table, (st_data_t)class_method_p, (st_data_t*)&mtblval)) {
+  if (!st_lookup(sampling_table, (st_data_t)class_method_or_module_function_p, (st_data_t*)&mtblval)) {
     mtblval = rb_hash_new();
-    st_insert(sampling_table, (st_data_t)class_method_p, (st_data_t)mtblval);
+    st_insert(sampling_table, (st_data_t)class_method_or_module_function_p, (st_data_t)mtblval);
   }
   mtbl = RHASH_TBL(mtblval);
 
@@ -149,16 +149,16 @@ static void __sampling_poscall(VALUE val, VALUE method_klass, VALUE method_id)
 
   klass = rb_class_of(val);
   if (FL_TEST(klass, FL_SINGLETON)) {
-    if (rb_obj_class(val) == rb_cClass) {
+    if (rb_obj_class(val) == rb_cClass || rb_obj_class(val) == rb_cModule) {
       klass = val;
-      singleton_class_obj_p = Qtrue;
+      singleton_class_or_module_obj_p = Qtrue;
     } else {
       klass = rb_cCastOffSingletonClass;
     }
   }
 
   if (!st_lookup(hash, (st_data_t)klass, 0)) {
-    st_insert(hash, (st_data_t)klass, (st_data_t)singleton_class_obj_p);
+    st_insert(hash, (st_data_t)klass, (st_data_t)singleton_class_or_module_obj_p);
   }
 
   return;
@@ -571,6 +571,7 @@ static VALUE <%= this_function_name() %>(VALUE dummy, VALUE self)
   /* decl variables */
   VALUE cast_off_argv[<%= @root_iseq.all_argv_size() %>];
   VALUE cast_off_tmp;
+  VALUE sampling_tmp;
   rb_thread_t *th;
 %if inline_block?
   VALUE thval;

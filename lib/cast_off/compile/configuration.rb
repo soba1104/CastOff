@@ -16,7 +16,9 @@ module Compiler
     class InvalidConfigurationError < StandardError; end
 
     attr_reader :return_value_configuration
+    attr_reader :ignore_configuration_of_return_values
     attr_reader :variable_configuration
+    attr_reader :ignore_configuration_of_variables
     attr_reader :method_information_usage
     attr_reader :option_table_configuration
     attr_reader :bind
@@ -194,13 +196,16 @@ o = Object
           ary.each{|t| bug(t) unless t.is_a?(ClassWrapper)}
         end
       end
+      @ignore_configuration_of_return_values = {}
       @variable_configuration.values.each do |ary|
         ary.each{|t| bug(t) unless t.is_a?(ClassWrapper)}
       end
+      @ignore_configuration_of_variables = {}
       @method_information_usage = []
       @option_table_configuration = {}
       @use_method_frame = false
       OPTION_TABLE.each{|(cvar, val)| @option_table_configuration[cvar] = self.class.class_variable_get(cvar)}
+      prefetch_constant(false) unless @bind
     end
 
     def use_method_frame(bool)
@@ -248,6 +253,12 @@ o = Object
         end
         @variable_configuration[sym] = (dst | src)
       end
+      conf.ignore_configuration_of_variables.each do |(k, v)|
+        bug() unless k.instance_of?(Symbol)
+        bug() unless v == true
+        @ignore_configuration_of_variables[k] = true
+      end
+      __ignore_configuration_of_variables(:union)
 
       conf.return_value_configuration.each do |(cw0, src0)|
         bug() unless src0.instance_of?(Hash)
@@ -264,6 +275,13 @@ o = Object
           dst0[sym] = (dst1 | src1)
         end
       end
+      conf.ignore_configuration_of_return_values.each do |(k, mids)|
+        bug() if mids.find{|m| !m.instance_of?(Symbol)}
+        @ignore_configuration_of_return_values[k] ||= []
+        @ignore_configuration_of_return_values[k] |= mids
+      end
+      __ignore_configuration_of_return_values(:union)
+
       return if @bind
       return unless conf.bind
       bug() unless conf.bind.instance_of?(BindingWrapper)
@@ -272,14 +290,20 @@ o = Object
 
     def update_variable_configuration(update_hash)
       update_p = false
+      updates = []
+      starts  = @variable_configuration.keys
       update_hash.each do |(k, v)|
         bug() unless k.instance_of?(Symbol)
         bug() unless v.instance_of?(Array)
-        next if v.map{|a| a.first }.include?(SingletonClass)
-        # variable annotation
+        if v.map{|a| a.first }.include?(SingletonClass)
+          update_p = true unless @ignore_configuration_of_variables[k]
+          @ignore_configuration_of_variables[k] = true
+        end
+        next if @ignore_configuration_of_variables[k]
+        # annotation of variables
         a0 = v
         a0 = a0.map{|(c, singleton_p)|
-          bug(c) unless c.is_a?(Class)
+          bug(c) unless c.is_a?(Class) || (c.is_a?(Module) && singleton_p)
           bug()  unless c != SingletonClass
           if singleton_p
             wrapper = ClassWrapper.new(c, false)
@@ -290,31 +314,70 @@ o = Object
           wrapper
         }
         a1 = @variable_configuration[k] || []
-        update_p = true unless (a0 - a1).empty?
+        updates << k unless (a0 - a1).empty?
         a1 |= a0
         @variable_configuration[k] = a1
       end
-      update_p
+      deletes = __ignore_configuration_of_variables(:update)
+      inc_p = !(updates - deletes).empty?
+      dec_p = !(starts & deletes).empty?
+      inc_p | dec_p | update_p
     end
 
     def update_return_value_configuration(update_hash)
       update_p = false
+      updates = []
+      starts  = []
+      @return_value_configuration.each do |klass, hash|
+        bug() unless klass.instance_of?(ClassWrapper)
+        bug() unless hash.instance_of?(Hash)
+        hash.keys.each do |mid|
+          bug() unless mid.instance_of?(Symbol)
+          starts << [klass, mid]
+        end
+      end
       bug() unless update_hash.size == 2
       update_hash.each do |(sym, mtbl)|
         bug() unless sym == :singleton_methods || sym == :instance_methods
         bug() unless mtbl.is_a?(Hash)
         mtbl.each do |(k, v)|
-          bug() unless k.instance_of?(Class)
+          bug() unless k.instance_of?(Class) || (k.instance_of?(Module) && sym == :singleton_methods)
           bug() unless v.instance_of?(Hash)
-          next if k == SingletonClass
-          # return value annotation
+          if k == SingletonClass
+            bug() if sym == :singleton_methods
+            ignore_targets = v.keys
+            bug() if ignore_targets.find{|m| !m.instance_of?(Symbol)}
+            @ignore_configuration_of_return_values[SingletonClass] ||= []
+            update_p = true unless (ignore_targets - @ignore_configuration_of_return_values[SingletonClass]).empty?
+            @ignore_configuration_of_return_values[SingletonClass] |= ignore_targets
+            next
+          end
+          # annotation of return values
           h0 = v
           k  = ClassWrapper.new(k, sym == :instance_methods)
           h1 = @return_value_configuration[k] || {}
           h0.each do |(mid, klasses0)|
-            next if klasses0.include?(SingletonClass)
+            ignore_p = false
+            bug() unless klasses0.is_a?(Array)
+            klasses0.each do |(c, singleton_p)|
+              if c == SingletonClass
+                bug() if singleton_p
+                ignore_p = true
+                break
+              end
+            end
+            if ignore_p
+              bug() unless k.instance_of?(ClassWrapper)
+              ignore_targets = (@ignore_configuration_of_return_values[k] ||= [])
+              unless ignore_targets.include?(mid)
+                ignore_targets.push(mid)
+                update_p = true 
+              end
+              next
+            end
+            next if @ignore_configuration_of_return_values[k] && @ignore_configuration_of_return_values[k].include?(mid)
             klasses0 = klasses0.map{|(c, singleton_p)|
-              bug(c) unless c.is_a?(Class)
+              bug(c) unless c.is_a?(Class) || (c.is_a?(Module) && singleton_p)
               bug()  unless c != SingletonClass
               if singleton_p
                 wrapper = ClassWrapper.new(c, false)
@@ -325,14 +388,20 @@ o = Object
               wrapper
             }
             klasses1 = h1[mid] || []
-            update_p = true unless (klasses0 - klasses1).empty?
+            updates |= [[k, mid]] unless (klasses0 - klasses1).empty?
             klasses1 |= klasses0
             h1[mid] = klasses1
           end
           @return_value_configuration[k] = h1
         end
       end
-      update_p
+      deletes = __ignore_configuration_of_return_values(:update)
+      inc_p = !(updates - deletes).empty?
+      dec_p = !(starts & deletes).empty?
+      bug() if updates.find{|(k, v)| !(k.instance_of?(ClassWrapper) && v.instance_of?(Symbol))}
+      bug() if deletes.find{|(k, v)| !(k.instance_of?(ClassWrapper) && v.instance_of?(Symbol))}
+      bug() if  starts.find{|(k, v)| !(k.instance_of?(ClassWrapper) && v.instance_of?(Symbol))}
+      inc_p | dec_p | update_p
     end
 
     def compact()
@@ -2259,7 +2328,7 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
       :@@reuse_compiled_code                     => [true,  false, true],
       :@@allow_builtin_variable_incompatibility  => [false, true,  false],
       :@@prefetch_constant                       => [true,  true,  false],
-      :@@deoptimize                              => [false, true,  false],
+      :@@deoptimize                              => [false, true,  true],
       :@@development                             => [false, true,  true],
       :@@alert_override                          => [true,  true,  false],
       :@@skip_configuration_check                => [false, false, true],
@@ -2377,6 +2446,48 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
     end
 
     private
+
+    def __ignore_configuration_of_variables(sign)
+      deletes = []
+      @ignore_configuration_of_variables.each do |(k, v)|
+        bug() unless k.instance_of?(Symbol)
+        bug() unless v == true
+        next unless @variable_configuration[k]
+        bug() if @variable_configuration[k].empty?
+        vlog("(#{sign}): ignore #{k} => #{@variable_configuration[k]}")
+        @variable_configuration.delete(k)
+        deletes |= [k]
+      end
+      deletes
+    end
+
+    def __ignore_configuration_of_return_values(sign)
+      deletes = []
+      @ignore_configuration_of_return_values.each do |(k, mids)|
+        bug() if mids.find{|m| !m.instance_of?(Symbol)}
+        if k.instance_of?(ClassWrapper)
+          h = @return_value_configuration[k]
+          next  unless h
+          bug() unless h.instance_of?(Hash)
+          kh = {k => h}
+        else
+          bug() unless k == SingletonClass
+          kh = @return_value_configuration.dup
+        end
+        kh.each do |(k, h)|
+          h.keys.each do |m|
+            bug() unless m.instance_of?(Symbol)
+            if mids.include?(m)
+              vlog("(#{sign}): ignore #{k}#{k.singleton? ? '.' : '#'}#{m} => #{h[m]}")
+              h.delete(m)
+              @return_value_configuration.delete(k) if h.empty?
+              deletes |= [[k, m]]
+            end
+          end
+        end
+      end
+      deletes
+    end
 
     def invalid_configuration(message = "Invalid configuration")
       raise(InvalidConfigurationError, message)

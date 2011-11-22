@@ -23,37 +23,16 @@ module CastOff::Compiler
         # nothing to do
       end
 
-      def propergate_value_which_can_not_unbox(defs)
+      def propergate_boxed_value(defs)
         change = false
 
         # forward
-        change |= defs.can_not_unbox_variable_resolve_forward(@param_value)
+        change |= defs.propergate_boxed_value_forward(@param_value)
 
         # backward
-        if @param_value.can_not_unbox?
-          change |= defs.can_not_unbox_variable_resolve_backward(@param_value)
-        end
+        change |= defs.propergate_boxed_value_backward(@param_value) if @param_value.boxed?
 
         change
-      end
-
-      def propergate_box_value(defs)
-        change = false
-
-        # forward
-        change |= defs.box_value_resolve_forward(@param_value)
-
-        # backward
-        if @param_value.boxed?
-          change |= defs.box_value_resolve_backward(@param_value)
-        end
-
-        change
-      end
-
-      def propergate_unbox_value(defs)
-        return false if @param_value.can_not_unbox?
-        defs.unbox_value_resolve(@param_value)
       end
       ### unboxing end ###
 

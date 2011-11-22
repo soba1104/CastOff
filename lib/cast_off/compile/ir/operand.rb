@@ -26,29 +26,33 @@ module CastOff::Compiler
         @state = :undefined
         @annotation = []
         @ignore = []
-        @unboxing_state = :undefined
+        @unboxing_state = :unboxed
         @negative_cond_value = false
       end
 
       ### unboxing begin ###
-      def unbox()
-        case @unboxing_state
-        when :can_unbox
-          @unboxing_state = :unboxed
-          return true
-        when :unboxed
-          return false
+      def can_unbox?
+        if instance_of?(LocalVariable) || instance_of?(TmpVariable) || instance_of?(Literal)
+          if dynamic? || @types.size != 1
+            false
+          else
+            bug() unless @types[0].instance_of?(ClassWrapper)
+            case @types[0]
+            when FloatWrapper, FixnumWrapper
+              true
+            else
+              false
+            end
+          end
+        else
+          # ConstWrapper, Self, Pointer, Argument, TmpBuffer
+          false
         end
-        bug()
-      end
-
-      def unboxed?
-        @unboxing_state == :unboxed
       end
 
       def box()
         case @unboxing_state
-        when :unboxed, :can_unbox, :can_not_unbox
+        when :unboxed
           @unboxing_state = :boxed
           return true
         when :boxed
@@ -61,42 +65,24 @@ module CastOff::Compiler
         @unboxing_state == :boxed
       end
 
-      def can_unbox?
-        if instance_of?(LocalVariable) || instance_of?(TmpVariable) || instance_of?(Literal)
-          if dynamic? || @types.size != 1
-            false
-          else
-            true
-          end
-        else
-          # ConstWrapper, Self, Pointer, Argument, TmpBuffer
-          false
-        end
+      def unboxed?
+        @unboxing_state == :unboxed
       end
 
-      def can_not_unbox?
-        @unboxing_state == :can_not_unbox
-      end
-
-      def can_unbox()
-        bug() unless @unboxing_state == :undefined
-        @unboxing_state = :can_unbox
-      end
-
-      def can_not_unbox()
+      def boxed_form()
         case @unboxing_state
-        when :undefined, :can_unbox
-          @unboxing_state = :can_not_unbox
-          true
-        when :can_not_unbox
-          false
-        else
-          bug()
+        when :boxed
+          return self.to_s
+        when :unboxed
+          bug() unless can_unbox?
+          case @types.first
+          when FixnumWrapper
+            return "LONG2FIX(#{self.to_s})"
+          when FloatWrapper
+            return "DBL2NUM(#{self.to_s})"
+          end
         end
-      end
-
-      def box_unbox_undefined?
-        @unboxing_state == :undefined
+        bug()
       end
       ### unboxing end ###
 
@@ -114,7 +100,7 @@ module CastOff::Compiler
           when FixnumWrapper
             return :long
           end
-        when :can_unbox, :can_not_unbox, :boxed
+        when :boxed
           return :VALUE
         end
         bug()

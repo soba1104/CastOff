@@ -36,27 +36,15 @@ module CastOff
         can_not_unbox()
       end
 
-      def propergate_value_which_can_not_unbox(defs)
+      def propergate_boxed_value(defs)
         # nothing to do
         false
       end
-
-      def propergate_box_value(defs)
-        # nothing to do
-        false
-      end
-
-      def propergate_unbox_value(defs)
-        return false if @return_value.can_not_unbox?
-        @return_value.unbox()
-      end
-
-      #private
 
       def can_not_unbox()
         params = param_variables()
-        params.each{|p| p.can_not_unbox()}
-        @return_value.can_not_unbox()
+        params.each{|p| p.box()}
+        @return_value.box()
       end
       ### unboxing end ###
 
@@ -261,8 +249,8 @@ module CastOff
       ### unboxing begin ###
       def unboxing_prelude()
         params = param_variables()
-        params.each{|p| p.can_not_unbox()}
-        @return_value.can_unbox()
+        params.each{|p| p.box()}
+        @return_value.box() unless @return_value.can_unbox?
       end
       ### unboxing end ###
 
@@ -1728,7 +1716,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
         [MethodWrapper.new(ArrayWrapper,  :first), 1]  => [['first',        [], nil, nil, false, false]],
         [MethodWrapper.new(FixnumWrapper, :+), 2]      => [['fixnum_plus',  [Fixnum], Fixnum, nil, true, true], ['float_plus',   [Float],   nil, Float, true, true]], # FIXME
         [MethodWrapper.new(FixnumWrapper, :-), 2]      => [['fixnum_minus', [Fixnum], Fixnum, nil, true, true], ['float_minus',  [Float],   nil, Float, true, true]], # FIXME
-        [MethodWrapper.new(FixnumWrapper, :*), 2]      => [['fixnum_mult',  [Fixnum], Fixnum, nil, true, true],        ['float_mult',   [Float],   nil, Float, true, true]], # FIXME
+        [MethodWrapper.new(FixnumWrapper, :*), 2]      => [['fixnum_mult',  [Fixnum], Fixnum, nil, true, true], ['float_mult',   [Float],   nil, Float, true, true]], # FIXME
         [MethodWrapper.new(FixnumWrapper, :<=), 2]     => [['le',           [Fixnum], nil, [TrueClass,  FalseClass], false, false]],
         [MethodWrapper.new(FixnumWrapper, :<), 2]      => [['lt',           [Fixnum], nil, [TrueClass,  FalseClass], false, false]],
         [MethodWrapper.new(FixnumWrapper, :>=), 2]     => [['ge',           [Fixnum], nil, [TrueClass,  FalseClass], false, false]],
@@ -1741,7 +1729,23 @@ You should not use #{@method_id} method in compilation target of CastOff.
         [MethodWrapper.new(FloatWrapper,  :-), 2]      => [['float_minus',  [Float],   nil, Float, true, true], ['fixnum_minus',  [Fixnum],  nil, Float, true, true]],
         [MethodWrapper.new(FloatWrapper,  :*), 2]      => [['float_mult',   [Float],   nil, Float, true, true], ['fixnum_mult',   [Fixnum],  nil, Float, true, true]],
         [MethodWrapper.new(FloatWrapper,  :/), 2]      => [['float_div',    [Float],   nil, Float, true, true], ['fixnum_div',    [Fixnum],  nil, Float, true, true]],
-        [MethodWrapper.new(FloatWrapper,  :>), 2]      => [['float_gt',     [Float],   nil, [TrueClass,  FalseClass], false, true]],
+        [MethodWrapper.new(FloatWrapper,  :<=), 2]     => [['float_le',     [Float],   nil, [TrueClass,  FalseClass], false, true],
+                                                           ['fixnum_le',    [Fixnum],  nil, [TrueClass,  FalseClass], false, true]],
+        [MethodWrapper.new(FloatWrapper,  :<), 2]      => [['float_lt',     [Float],   nil, [TrueClass,  FalseClass], false, true],
+                                                           ['fixnum_lt',    [Fixnum],  nil, [TrueClass,  FalseClass], false, true]],
+        [MethodWrapper.new(FloatWrapper,  :>=), 2]     => [['float_ge',     [Float],   nil, [TrueClass,  FalseClass], false, true],
+                                                           ['fixnum_ge',    [Fixnum],  nil, [TrueClass,  FalseClass], false, true]],
+        [MethodWrapper.new(FloatWrapper,  :>), 2]      => [['float_gt',     [Float],   nil, [TrueClass,  FalseClass], false, true],
+                                                           ['fixnum_gt',    [Fixnum],  nil, [TrueClass,  FalseClass], false, true]],
+        [MethodWrapper.new(FloatWrapper,  :==), 2]     => [['float_eq',     [Float],   nil, [TrueClass,  FalseClass], false, true],
+                                                           ['fixnum_eq',    [Fixnum],  nil, [TrueClass,  FalseClass], false, true]],
+        [MethodWrapper.new(FloatWrapper,  :===), 2]    => [['float_eqq',    [Float],   nil, [TrueClass,  FalseClass], false, true],
+                                                           ['fixnum_eqq',   [Fixnum],  nil, [TrueClass,  FalseClass], false, true]],
+        [MethodWrapper.new(FixnumWrapper, :-@), 1]     => [['uminus',       [], Fixnum, nil, true, true]],
+        [MethodWrapper.new(FloatWrapper, :-@), 1]      => [['uminus',       [], nil, Float, true, true]],
+        [MethodWrapper.new(FixnumWrapper, :to_f), 1]   => [['to_f',         [], nil, Float, true, true]],
+        [MethodWrapper.new(FloatWrapper, :to_f), 1]    => [['to_f',         [], nil, Float, true, false]],
+        [MethodWrapper.new(FloatWrapper, :to_i), 1]    => [['to_i',         [], nil, Float, false, true]],
       }
       SpecializeTable1 = {
         [:==,   2, MethodWrapper.new(ObjectWrapper, :==)]      => :specialized_object_eq,
@@ -1800,10 +1804,26 @@ You should not use #{@method_id} method in compilation target of CastOff.
         bug()
       end
 
+      def unboxed_decl(v)
+        bug() unless v.is_a?(Variable)
+        bug() if v.dynamic?
+        bug() unless v.types.size == 1
+        c = v.types[0]
+        bug() unless c.is_a?(ClassWrapper)
+        case c
+        when FloatWrapper
+          'double'
+        when FixnumWrapper
+          'long'
+        else
+          bug()
+        end
+      end
+
       def specialized_code(klass, mid, argc, recv, param)
         bug() unless klass.is_a?(ClassWrapper)
         return false unless @configuration.enable_inline_api?
-        # FIXME 関数ポインタが実行時に同一であることをチェック
+        # FIXME ロード時に、関数ポインタが想定しているものと同一であることをチェック
         if klass.String? || klass.Array? || klass.Fixnum? || klass.Float?
           entries = SpecializeTable0[[MethodWrapper.new(klass, mid), argc]]
           return false unless entries
@@ -1816,9 +1836,6 @@ You should not use #{@method_id} method in compilation target of CastOff.
             (param + [@return_value]).zip(t_param + [t_result]).each do |p, t|
               next if t.nil?
               unless p.is_just?(t)
-                #if @source && @configuration.development?
-                  #@translator.add_inlineapi_suggestion(["#{klass}###{mid}", "1st argument can be not #{t}", @source_line, @source]) 
-                #end
                 fin = false
                 break
               end
@@ -1832,24 +1849,12 @@ You should not use #{@method_id} method in compilation target of CastOff.
           name, t_param, t_result, exact_classes, can_unbox_result, can_unbox_param = entry
 
           s_param = param.empty? ? '' : ", #{param.join(", ")}"
-          if can_unbox_param
-            suffix = ([recv] + param + [@return_value]).map{|p|
-              if p.unboxed?
-                bug() if p.dynamic?
-                bug() unless p.types.size == 1
-                c = p.types[0]
-                case c
-                when FloatWrapper
-                  'double'
-                when FixnumWrapper
-                  'long'
-                else
-                  bug()
-                end
-              else
-                'VALUE'
-              end
-            }.join("_")
+          if can_unbox_param || can_unbox_result
+            bug() if !can_unbox_param && ([recv] + param).find{|p| p.unboxed? }
+            suffix = ([recv] + param).map{|p| p.unboxed? ? unboxed_decl(p) : 'VALUE'}
+            bug() if !can_unbox_result && @return_value.unboxed?
+            suffix << (@return_value.unboxed? ? unboxed_decl(@return_value) : 'VALUE')
+            suffix = suffix.join('_')
             return "  #{@return_value} = cast_off_inline_#{klass.to_s.downcase}_#{name}_#{suffix}(#{recv}#{s_param});"
           else
             return "  #{@return_value} = cast_off_inline_#{klass.to_s.downcase}_#{name}(#{recv}#{s_param});"
@@ -2030,7 +2035,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
 %  if funcall
   <%= funcall_code(nil, id, recv, param, @argc) %>
 %  else
-    rb_raise(rb_eCastOffExecutionError, "type mismatch: reciever = <%= recv %>, method name = <%= id %>");
+    rb_bug("type mismatch: method name = <%= @method_id %>");
 %  end
   }
 %end
@@ -2071,7 +2076,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
         id = @translator.allocate_id(@method_id)
         bug() if recv.undefined?
         if @configuration.development? && sampling_return_value?
-          ret << "  cast_off_tmp = #{recv};"
+          ret << "  sampling_tmp = #{recv};"
         end
         if blockarg?
           ret << funcall_code(nil, id, recv, param, @argc)
@@ -2146,7 +2151,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
           end
         end
         if @configuration.development? && sampling_return_value?
-          ret << "  sampling_poscall(#{@return_value}, cast_off_tmp, ID2SYM(rb_intern(#{@method_id.to_s.inspect})));"
+          ret << "  sampling_poscall(#{@return_value}, sampling_tmp, ID2SYM(rb_intern(#{@method_id.to_s.inspect})));"
         end
         ret.join("\n")
       end
@@ -2189,6 +2194,8 @@ You should not use #{@method_id} method in compilation target of CastOff.
         recv.types.each do |t|
           ok = @configuration.use_method_information(t, @method_id)
           return false unless ok
+          # これのせいで依存するクラスなどが結構増える。読み込みが遅くなる。
+          @dependency.add(t, @method_id, true)
         end 
         return true
       end
@@ -2211,6 +2218,8 @@ You should not use #{@method_id} method in compilation target of CastOff.
           recv.types.each do |t|
             ok = @configuration.use_method_information(t, @method_id)
             return true unless ok
+            # これのせいで依存するクラスなどが結構増える。読み込みが遅くなる。
+            @dependency.add(t, @method_id, true)
           end 
         end
         se
@@ -2286,19 +2295,8 @@ You should not use #{@method_id} method in compilation target of CastOff.
             return
           end
           name, t_args, t_result, exact_classes, can_unbox_result, can_unbox_param = entry
-          if can_unbox_param
-            params.each do |p|
-              next unless p.box_unbox_undefined? # for guard
-              p.can_unbox? ? p.can_unbox() : p.can_not_unbox()
-            end
-          else
-            params.each{|p| p.can_not_unbox()}
-          end
-          if can_unbox_result
-            @return_value.can_unbox()
-          else
-            @return_value.can_not_unbox()
-          end
+          can_unbox_param ? params.each{|p| p.box() unless p.can_unbox?} : params.each{|p| p.box()}
+          @return_value.box() unless can_unbox_result && @return_value.can_unbox?
           return
         end
       end

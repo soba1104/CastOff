@@ -26,85 +26,27 @@ module CastOff::Compiler
 
       ### unboxing begin ###
       def unboxing_prelude()
-        if @src.can_unbox? && @dst.can_unbox?
-          @src.can_unbox()
-          @dst.can_unbox()
-        else
-          @src.can_not_unbox()
-          @dst.can_not_unbox()
+        unless @src.can_unbox? && @dst.can_unbox?
+          @src.box()
+          @dst.box()
         end
       end
 
-      def propergate_value_which_can_not_unbox(defs)
+      def propergate_boxed_value(defs)
         change = false
 
         # forward
-        change |= defs.can_not_unbox_variable_resolve_forward(@src)
-        if @src.can_not_unbox?
-          change |= @dst.can_not_unbox()
-        end
+        change |= defs.propergate_boxed_value_forward(@src)
+        change |= @dst.box() if @src.boxed?
 
         # backward
-        if @dst.can_not_unbox?
-          change |= @src.can_not_unbox()
-        end
-        if @src.can_not_unbox?
-          change |= defs.can_not_unbox_variable_resolve_backward(@src)
-        end
-        bug() unless @src.can_not_unbox? == @dst.can_not_unbox?
+        change |= @src.box() if @dst.boxed?
+        change |= defs.propergate_boxed_value_backward(@src) if @src.boxed?
 
-        change
-      end
-
-      def propergate_box_value(defs)
-        change = false
-
-        # forward
-        change |= defs.box_value_resolve_forward(@src)
-        if @src.boxed?
-          change |= @dst.box()
-        end
-
-        # backward
-        if @dst.boxed?
-          change |= @src.box()
-        end
-        if @src.boxed?
-          change |= defs.box_value_resolve_backward(@src)
-        end
         bug() unless @src.boxed?   == @dst.boxed?
         bug() unless @src.unboxed? == @dst.unboxed?
 
         change
-      end
-
-      def propergate_unbox_value(defs)
-        #return false if @src.unboxed? && @dst.unboxed?
-        if @src.can_not_unbox?
-          bug() unless @dst.can_not_unbox?
-          return false
-        else
-          bug() if @dst.can_not_unbox?
-          change = false
-
-          if @src.instance_of?(Literal)
-            bug() unless @src.types.size == 1
-            bug() unless @src.static?
-            floatwrap  = ClassWrapper.new(Float, true)
-            fixnumwrap = ClassWrapper.new(Fixnum, true)
-            case @src.types[0]
-            when floatwrap, fixnumwrap
-              change |= @src.unbox()
-            end
-          end
-
-          change |= defs.unbox_value_resolve(@src)
-          if @src.unboxed? && !@dst.unboxed?
-            @dst.unbox()
-            change = true
-          end
-          return change
-        end
       end
       ### unboxing end ###
 

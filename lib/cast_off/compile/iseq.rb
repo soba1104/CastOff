@@ -300,6 +300,7 @@ static void <%= ifunc_node_generator() %>()
   rb_thread_t *th = current_thread();
   VALUE cast_off_argv[<%= own_argv_size() %>];
   VALUE cast_off_tmp;
+  VALUE sampling_tmp;
   VALUE self = get_self(th);
   int lambda_p = cast_off_lambda_p(arg, argc, argv);
   int i, num;
@@ -439,6 +440,16 @@ static void <%= ifunc_node_generator() %>()
         @excs[exc] ||= []
         entry = [pc, label, stack]
         @excs[exc] << entry unless @excs[exc].include?(entry)
+      end
+
+      def delete_labels(ls)
+        entries = @excs[:break]
+        return unless entries
+        entries.delete_if do |(pc, label, stack)|
+          del_p = ls.include?(label)
+          dlog("#{self}: delete break label #{label}") if del_p
+          del_p
+        end
       end
 
       def to_name

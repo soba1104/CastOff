@@ -127,20 +127,20 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
       end
 
       def add(klass, mid, strong_p)
-        # TODO include で継承関係が変わったのを検出
         bug() unless klass.instance_of?(ClassWrapper)
         targets = [klass]
-        if not klass.singleton?
-          klass.each_method_search_target(mid) do |cm|
-            next if cm == klass.contain_class
-            case cm
-            when Class
-              targets << ClassWrapper.new(cm, true)
-            when Module
-              targets << ModuleWrapper.new(cm)
-            else
-              bug()
-            end
+        klass.each_method_search_target(mid) do |cm|
+          next if klass.singleton? ? (cm == klass) : (cm == klass.contain_class)
+          case cm
+          when Class
+            targets << ClassWrapper.new(cm, true)
+          when Module
+            targets << ModuleWrapper.new(cm)
+          when ClassWrapper
+            bug() unless cm.singleton?
+            targets << cm
+          else
+            bug()
           end
         end
         targets.each do |t|
@@ -159,6 +159,27 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
           bug() unless klass.instance_of?(ClassWrapper) || klass.instance_of?(ModuleWrapper)
           # TODO ブロックインライニングしたメソッドに対して
           #      コンパイル時のメソッドと等しいものかどうかをチェック
+        end
+      end
+
+      def self.copy(dst, src, singleton_p)
+        bug() unless dst.is_a?(Module)
+        dst = ModuleWrapper.new(dst)
+        deps  = singleton_p ? @@singleton_method_dependency : @@instance_method_dependency
+        funcs = singleton_p ? @@singleton_method_dependency_initializers : @@instance_method_dependency_initializers
+        (deps[src] || []).each do |mid|
+          finits = funcs[[src, mid]]
+          if finits && !finits.empty?
+            finits.each{|f| instance_method_depend(dst, mid, f)}
+          else
+            bug() unless singleton_p
+            case mid
+            when :singleton_method_added, :method_added, :include, :extend
+              # nothing to do
+            else
+              bug()
+            end
+          end
         end
       end
 
@@ -193,13 +214,39 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
             end
           end
 
+          # include のフックまで入れると読み込み時間が結構遅くなるので注意
           begin
-            singleton_method_added = o.method(:singleton_method_added)
+            m_include = o.method(:include).unbind
+            m_extend  = o.method(:extend).unbind
+          rescue NameError
+            raise(ExecutionError.new("#{o}: include or extend not defined"))
+          end
+          define_method(:include) do |*mods|
+            extend_p = Dependency.extend?
+            CastOff.dlog("#{self} #{extend_p ? 'extends' : 'includes'} #{mods}")
+            bug() unless m_include && m_extend
+            m = extend_p ? m_extend : m_include
+            # include, extend の対象は self なので、self 以外が include, extend することはない。
+            m.bind(self).call(*mods)
+            return unless o == self
+            mods.each do |mod|
+              next unless mod.is_a?(Module)
+              Dependency.copy(mod, self, extend_p)
+              Dependency.hook(mod) unless mod.singleton_methods(false).include?(:override_singleton_method)
+              methods = mod.instance_methods(false) + mod.private_instance_methods(false)
+              override_callback = extend_p ? :override_singleton_method : :override_method
+              methods.each{|mid| o.__send__(override_callback, o, mid, extend_p ? :extend : :include)}
+            end
+          end
+          alias extend include
+
+          begin
+            singleton_method_added = o.method(:singleton_method_added).unbind
           rescue NameError
             singleton_method_added = nil
           end
           begin
-            method_added = o.method(:method_added)
+            method_added = o.method(:method_added).unbind
           rescue NameError
             method_added = nil
           end
@@ -209,15 +256,15 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
                 CastOff.dlog("singleton method added #{o}.#{mid}")
                 CastOff.delete_original_singleton_method_iseq(self, mid)
                 override_singleton_method(o, mid, :added) 
-                singleton_method_added.call(mid) if singleton_method_added
+                singleton_method_added.bind(self).call(mid) if singleton_method_added
               else
                 CastOff.dlog("method added #{o}##{mid}")
                 CastOff.delete_original_instance_method_iseq(self, mid)
                 override_method(o, mid, :added)
-                method_added.call(mid) if method_added
+                method_added.bind(self).call(mid) if method_added
               end
             elsif o == BasicObject && method_added && !Dependency.singleton_method_added?
-              method_added.call(mid)
+              method_added.bind(self).call(mid)
             end
             super(mid) rescue NoMethodError
           end
@@ -225,10 +272,11 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
           CastOff.dlog("hook #{o}")
         end
         @@singleton_method_dependency[o] ||= []
-        @@singleton_method_dependency[o] |= [:method_added, :singleton_method_added]
+        @@singleton_method_dependency[o] |= [:method_added, :singleton_method_added, :include]
         @@singleton_method_strong_dependency[o] ||= []
         @@singleton_method_strong_dependency[o] |= [:method_added]
         @@singleton_method_strong_dependency[o] |= [:singleton_method_added]
+        @@singleton_method_strong_dependency[o] |= [:include]
       end
 
       def hook(function_pointer_initializer)

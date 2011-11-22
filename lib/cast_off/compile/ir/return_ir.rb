@@ -31,22 +31,12 @@ module CastOff::Compiler
 
       ### unboxing begin ###
       def unboxing_prelude()
-        @return_value.can_not_unbox()
+        @return_value.box()
       end
 
-      def propergate_value_which_can_not_unbox(defs)
-        bug() unless @return_value.can_not_unbox?
-        defs.can_not_unbox_variable_resolve_backward(@return_value)
-      end
-
-      def propergate_box_value(defs)
+      def propergate_boxed_value(defs)
         bug() unless @return_value.boxed?
-        defs.box_value_resolve_backward(@return_value)
-      end
-
-      def propergate_unbox_value(defs)
-        bug() unless @return_value.can_not_unbox?
-        false
+        defs.propergate_boxed_value_backward(@return_value)
       end
       ### unboxing end ###
 
