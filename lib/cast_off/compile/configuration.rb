@@ -286,6 +286,7 @@ o = Object
       return unless conf.bind
       bug() unless conf.bind.instance_of?(BindingWrapper)
       @bind = conf.bind
+      prefetch_constant(true)
     end
 
     def update_variable_configuration(update_hash)

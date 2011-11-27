@@ -4,7 +4,7 @@ require 'rubygems'
 require 'optparse'
 require 'cast_off'
 
-this = File.expand_path(__FILE__)
+this = File.expand_path("#{Gem.bindir()}/#{File.basename(__FILE__)}")
 step = nil
 verbose = false
 clear = false
@@ -13,7 +13,7 @@ threshold = 100
 name = nil
 
 opt = OptionParser.new(<<-EOS, 32, '    ')
-CastOff is a performance improvement tool for Ruby1.9.3.
+CastOff is a compiler for Ruby1.9.3.
 
   Usage:
   cast_off [options] [programfile] [arguments]

@@ -466,6 +466,32 @@ static VALUE cast_off_get_iseq_from_block(VALUE self, VALUE block)
   return iseq->self;
 }
 
+static VALUE cast_off_get_iseq_line(VALUE self, VALUE iseqval)
+{
+  rb_iseq_t *iseq;
+
+  if (rb_class_of(iseqval) != rb_cISeq) {
+    rb_bug("cast_off_get_iseq_signiture: shoult not be reached");
+  }
+
+  iseq = DATA_PTR(iseqval);
+
+  return iseq->line_no;
+}
+
+static VALUE cast_off_get_iseq_filepath(VALUE self, VALUE iseqval)
+{
+  rb_iseq_t *iseq;
+
+  if (rb_class_of(iseqval) != rb_cISeq) {
+    rb_bug("cast_off_get_iseq_signiture: shoult not be reached");
+  }
+
+  iseq = DATA_PTR(iseqval);
+
+  return iseq->filepath;
+}
+
 static VALUE cast_off_get_caller(VALUE self)
 {
   VALUE thval = rb_thread_current();
@@ -1425,6 +1451,8 @@ void Init_cast_off(void)
   rb_define_method(rb_mCastOffCompiler, "override_target", cast_off_override_target, 2);
   rb_define_method(rb_mCastOffCompiler, "get_iseq", cast_off_get_iseq, 3);
   rb_define_method(rb_mCastOffCompiler, "get_iseq_from_block", cast_off_get_iseq_from_block, 1);
+  rb_define_method(rb_mCastOffCompiler, "get_iseq_filepath", cast_off_get_iseq_filepath, 1);
+  rb_define_method(rb_mCastOffCompiler, "get_iseq_line", cast_off_get_iseq_line, 1);
   rb_define_method(rb_mCastOffCompiler, "load_compiled_file", cast_off_load_compiled_file, 1);
   rb_define_method(rb_mCastOffCompiler, "get_caller", cast_off_get_caller, 0);
   rb_define_method(rb_mCastOffCompiler, "hook_method_invocation", cast_off_hook_method_invocation, 1);

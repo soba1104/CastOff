@@ -975,7 +975,7 @@ Source line is #{@root_iseq.source_line}.
       #ClassWrapper.new(Env, true)            => :rb_cEnv,
       ClassWrapper.new(Time, true)           => :rb_cTime,
       ClassWrapper.new(Symbol, true)         => :rb_cSymbol,
-      ClassWrapper.new(Mutex, true)          => :rb_cMutex,
+      #ClassWrapper.new(Mutex, true)          => :rb_cMutex,
       ClassWrapper.new(Thread, true)         => :rb_cThread,
       ClassWrapper.new(Struct, true)         => :rb_cStruct,
       #ClassWrapper.new(Match, true)          => :rb_cMatch,

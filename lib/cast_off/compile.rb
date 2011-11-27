@@ -234,8 +234,10 @@ module CastOff
       Thread.current[COMPILER_RUNNING_KEY] = bool
     end
 
+    Lock = Mutex.new()
     def execute_no_hook()
       bug() unless block_given?
+      Lock.synchronize do
       begin
         compiler_running(true)
         hook_m = hook_method_invocation(nil)
@@ -251,6 +253,7 @@ module CastOff
           bug() unless autoload_running?
           hook_class_definition_end(@@autoload_proc)
         end
+      end
       end
     end
 
@@ -468,9 +471,15 @@ Currently, CastOff cannot compile method which source file is not exist.
     continue_load = RUBY_VERSION != "1.9.3"
     s.class_eval do
       define_method(:method_added) do |mid|
+        return unless CastOff.respond_to?(:autoload_running?)
         if CastOff.autoload_running? && (!@@skipped.empty? || continue_load) && !CastOff.compiler_running?
           continue_load &= !@@autoload_proc.call()
         end
+      end
+    end
+    Module.class_eval do
+      define_method(:autoload) do |*args|
+        raise(ExecutionError.new("Currently, CastOff doesn't support Module#autoload"))
       end
     end
 

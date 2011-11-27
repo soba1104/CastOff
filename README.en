@@ -1,6 +1,5 @@
 * About CastOff
-CastOff is a performance improvement tool for Ruby1.9.3.
-In other words, CastOff is a compiler for Ruby1.9.3.
+CastOff is a compiler for Ruby1.9.3.
 CastOff compiles Ruby method (method written in Ruby) into C extension (method written in C)
 by using given information such as class information of variables.
 CastOff can reduce Ruby virtual machine overhead, so by use of CastOff,
