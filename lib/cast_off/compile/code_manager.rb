@@ -156,7 +156,7 @@ Max length of signiture is #{FILEPATH_LIMIT} in this environment.
         @annotation_path = "#{@dstdir}/#{@signiture}.ann"
         @development_mark_file = "development"
         @development_mark_path = "#{@dstdir}/#{@development_mark_file}"
-        @dstbin = "#{@dstdir}/#{@signiture}.so"
+        @dstbin = "#{@dstdir}/#{@signiture}.#{CONFIG['DLEXT']}"
         @longpath = @base_configuration_path # FIXME
         check_length()
       end
