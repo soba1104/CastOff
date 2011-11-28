@@ -1,10 +1,12 @@
 Gem::Specification.new do |spec|
   spec.name		      = "cast_off"
-  spec.version		      = "0.3.3"
+  spec.version		      = "0.3.5"
   spec.platform		      = Gem::Platform::RUBY
   spec.summary		      = "Compiler for Ruby1.9.3"
   spec.description	      = <<-EOS
-CastOff is a compiler for Ruby1.9.3
+CastOff is a compiler for Ruby1.9.3.
+Command line tool cast_off is available after installation.
+See 'cast_off --help' for more information.
   EOS
   spec.files		      = Dir['{lib/**/*,ext/**/*}'] + %w[
 				  cast_off.gemspec

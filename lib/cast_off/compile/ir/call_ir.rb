@@ -1088,7 +1088,7 @@ If you want to use these variables, use CastOff.allow_builtin_variable_incompati
           EOS
         when DEFINED_FUNC
           ret << <<-EOS
-  if (rb_method_boundp(rb_class_of(#{val}), #{@id}), 0) {
+  if (rb_method_boundp(rb_class_of(#{val}), #{@id}, 0)) {
     #{@return_value} = #{@needstr ? 'rb_str_new2("method")' : 'Qtrue'};
   } else {
     #{@return_value} = Qnil;
@@ -1714,9 +1714,9 @@ You should not use #{@method_id} method in compilation target of CastOff.
         [MethodWrapper.new(ArrayWrapper,  :empty?), 1] => [['empty_p',      [], nil, [TrueClass,  FalseClass], false, false]],
         [MethodWrapper.new(ArrayWrapper,  :last), 1]   => [['last',         [], nil, nil, false, false]],
         [MethodWrapper.new(ArrayWrapper,  :first), 1]  => [['first',        [], nil, nil, false, false]],
-        [MethodWrapper.new(FixnumWrapper, :+), 2]      => [['fixnum_plus',  [Fixnum], Fixnum, nil, true, true], ['float_plus',   [Float],   nil, Float, true, true]], # FIXME
-        [MethodWrapper.new(FixnumWrapper, :-), 2]      => [['fixnum_minus', [Fixnum], Fixnum, nil, true, true], ['float_minus',  [Float],   nil, Float, true, true]], # FIXME
-        [MethodWrapper.new(FixnumWrapper, :*), 2]      => [['fixnum_mult',  [Fixnum], Fixnum, nil, true, true], ['float_mult',   [Float],   nil, Float, true, true]], # FIXME
+        [MethodWrapper.new(FixnumWrapper, :+), 2]      => [['fixnum_plus',  [Fixnum], nil, [Fixnum, Bignum], false, true], ['float_plus',   [Float],   nil, Float, true, true]], # FIXME
+        [MethodWrapper.new(FixnumWrapper, :-), 2]      => [['fixnum_minus', [Fixnum], nil, [Fixnum, Bignum], false, true], ['float_minus',  [Float],   nil, Float, true, true]], # FIXME
+        [MethodWrapper.new(FixnumWrapper, :*), 2]      => [['fixnum_mult',  [Fixnum], nil, [Fixnum, Bignum], false, true], ['float_mult',   [Float],   nil, Float, true, true]], # FIXME
         [MethodWrapper.new(FixnumWrapper, :<=), 2]     => [['le',           [Fixnum], nil, [TrueClass,  FalseClass], false, false]],
         [MethodWrapper.new(FixnumWrapper, :<), 2]      => [['lt',           [Fixnum], nil, [TrueClass,  FalseClass], false, false]],
         [MethodWrapper.new(FixnumWrapper, :>=), 2]     => [['ge',           [Fixnum], nil, [TrueClass,  FalseClass], false, false]],
@@ -1741,7 +1741,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
                                                            ['fixnum_eq',    [Fixnum],  nil, [TrueClass,  FalseClass], false, true]],
         [MethodWrapper.new(FloatWrapper,  :===), 2]    => [['float_eqq',    [Float],   nil, [TrueClass,  FalseClass], false, true],
                                                            ['fixnum_eqq',   [Fixnum],  nil, [TrueClass,  FalseClass], false, true]],
-        [MethodWrapper.new(FixnumWrapper, :-@), 1]     => [['uminus',       [], Fixnum, nil, true, true]],
+        [MethodWrapper.new(FixnumWrapper, :-@), 1]     => [['uminus',       [], nil, [Fixnum, Bignum], false, true]],
         [MethodWrapper.new(FloatWrapper, :-@), 1]      => [['uminus',       [], nil, Float, true, true]],
         [MethodWrapper.new(FixnumWrapper, :to_f), 1]   => [['to_f',         [], nil, Float, true, true]],
         [MethodWrapper.new(FloatWrapper, :to_f), 1]    => [['to_f',         [], nil, Float, true, false]],
@@ -2076,7 +2076,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
         id = @translator.allocate_id(@method_id)
         bug() if recv.undefined?
         if @configuration.development? && sampling_return_value?
-          ret << "  sampling_tmp = #{recv};"
+          ret << "  sampling_tmp = #{recv.boxed_form};"
         end
         if blockarg?
           ret << funcall_code(nil, id, recv, param, @argc)
@@ -2117,7 +2117,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
               else_class = types[else_index]
               else_code = not_funcall_code(else_class, @method_id, recv, param, @argc)
               if !else_code
-                @dependency.add(else_class, @method_id, false)
+                @dependency.add(else_class, @method_id, false) if else_class.method_defined?
                 else_code = funcall_code(else_class, id, recv, param, @argc)
               end
               if nil_code == else_code
@@ -2151,7 +2151,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
           end
         end
         if @configuration.development? && sampling_return_value?
-          ret << "  sampling_poscall(#{@return_value}, sampling_tmp, ID2SYM(rb_intern(#{@method_id.to_s.inspect})));"
+          ret << "  sampling_poscall(#{@return_value.boxed_form}, sampling_tmp, ID2SYM(rb_intern(#{@method_id.to_s.inspect})));"
         end
         ret.join("\n")
       end

@@ -734,6 +734,12 @@ static VALUE cast_off_class_wrapper_get_cfunc_argc(VALUE self, VALUE mid)
   }
 }
 
+static VALUE cast_off_class_wrapper_method_defined_p(VALUE self, VALUE mid)
+{
+  VALUE klass = cast_off_class_wrapper_get_class(self);
+  return search_method(klass, SYM2ID(mid)) ? Qtrue : Qfalse;
+}
+
 static VALUE cast_off_class_wrapper_get_method_type(VALUE self, VALUE mid)
 {
   VALUE klass = cast_off_class_wrapper_get_class(self);
@@ -948,14 +954,22 @@ static VALUE cast_off_module_wrapper_marshal_dump(VALUE self)
   VALUE module = cast_off_module_wrapper_get_module(self);
   VALUE name = rb_mod_name(module);
 
-  /* TODO error handling */
+  if (TYPE(name) != T_STRING) {
+    rb_raise(rb_eTypeError, "failed to get module name");
+  }
+
   return name;
 }
 
 static VALUE cast_off_module_wrapper_marshal_load(VALUE self, VALUE name)
 {
-  VALUE module = rb_path_to_class(name);
+  VALUE module;
 
+  if (NIL_P(name)) {
+    rb_raise(rb_eArgError, "invalid marshal");
+  }
+
+  module = rb_path_to_class(name);
   if (rb_obj_class(module) != rb_cModule) {
     rb_raise(rb_eCastOffCompileError, "failed to load module");
   }
@@ -1495,6 +1509,7 @@ void Init_cast_off(void)
   rb_define_method(rb_cCastOffClassWrapper, "singleton?", cast_off_class_wrapper_singleton_p, 0);
   rb_define_method(rb_cCastOffClassWrapper, "get_cfunc_argc", cast_off_class_wrapper_get_cfunc_argc, 1);
   rb_define_method(rb_cCastOffClassWrapper, "get_method_type", cast_off_class_wrapper_get_method_type, 1);
+  rb_define_method(rb_cCastOffClassWrapper, "method_defined?", cast_off_class_wrapper_method_defined_p, 1);
   rb_define_method(rb_cCastOffClassWrapper, "get_attr_id", cast_off_class_wrapper_get_attr_id, 1);
   rb_define_method(rb_cCastOffClassWrapper, "instance_method_exist?", cast_off_class_wrapper_instance_method_exist_p, 1);
   rb_define_method(rb_cCastOffClassWrapper, "contain_class", cast_off_class_wrapper_contain_class, 0);

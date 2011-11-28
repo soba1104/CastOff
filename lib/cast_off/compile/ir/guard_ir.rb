@@ -254,12 +254,14 @@ static int <CLASS_CHECK_FUNCTION_NAME>_failed(VALUE obj, VALUE klass)
         @variables << @guard_value
         @variables_without_result << @guard_value
         @result_variable = nil
-        @dependent_local_variables = get_dependent_local_variables(vars)
-        @dependent_stack_variables = get_dependent_stack_variables(vars)
-        @dependent_variables = @dependent_local_variables.values.flatten + @dependent_stack_variables.values.flatten
         @source = @insn.source
         @source = @source.empty? ? nil : @source
         @source_line = @insn.line.to_s
+        if @configuration.deoptimize?
+          @dependent_local_variables = get_dependent_local_variables(vars)
+          @dependent_stack_variables = get_dependent_stack_variables(vars)
+          @dependent_variables = @dependent_local_variables.values.flatten + @dependent_stack_variables.values.flatten
+        end
       end
 
       ### unboxing begin ###
@@ -277,6 +279,7 @@ static int <CLASS_CHECK_FUNCTION_NAME>_failed(VALUE obj, VALUE klass)
         if @guard_value.boxed?
           change |= defs.propergate_boxed_value_backward(@guard_value)
           if @configuration.deoptimize?
+            bug() unless @dependent_variables
             @dependent_variables.each do |var|
               if var.is_a?(DynamicVariable)
                 bug() unless var.boxed?
@@ -318,6 +321,7 @@ static int <CLASS_CHECK_FUNCTION_NAME>_failed(VALUE obj, VALUE klass)
           @alive = true
           defs.mark(@guard_value)
           if @configuration.deoptimize?
+            bug() unless @dependent_variables
             @dependent_variables.each{|v| defs.mark(v)}
           end
           true
@@ -418,6 +422,7 @@ static int <CLASS_CHECK_FUNCTION_NAME>_failed(VALUE obj, VALUE klass)
       def reset()
         super()
         if @configuration.deoptimize?
+          bug() unless @dependent_variables
           @dependent_variables.map! do |v|
             bug() unless v.is_a?(Variable)
             @cfg.find_variable(v)

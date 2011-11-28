@@ -95,7 +95,11 @@ module CastOff
           #count = @@compilation_threshold if contain_loop?(klass, mid)
           bug() unless bind.instance_of?(Binding) || bind.nil?
           bind_table[[klass, mid]] = bind
-          location_table[[klass, mid]] = (file =~ /\(/) ? nil : [File.expand_path(file), line]
+          begin
+            location_table[[klass, mid]] = (file =~ /\(/) ? nil : [File.expand_path(file), line]
+          rescue Errno::ENOENT 
+            location_table[[klass, mid]] = nil
+          end
         end
         #if cinfo
           #table = (cinfo_table[[klass, mid]] ||= {})
@@ -153,7 +157,7 @@ module CastOff
       @@original_instance_method_iseq.delete([t, mid])
     end
 
-    def compile(target, mid, bind_or_typemap = nil, typemap = nil)
+    def compile(target, mid, bind_or_typemap = nil, typemap = nil, force_compilation = false)
       execute_no_hook() do
         case target
         when Class, Module
@@ -164,7 +168,7 @@ module CastOff
         mid, bind, typemap = parse_arguments(mid, bind_or_typemap, typemap)
         t = override_target(target, mid)
         iseq = @@original_instance_method_iseq[[t, mid]] || get_iseq(target, mid, false)
-        manager, configuration, suggestion = compile_iseq(iseq, mid, typemap, false, bind)
+        manager, configuration, suggestion = compile_iseq(iseq, mid, typemap, false, bind, force_compilation)
         manager.compilation_target_is_a(t, mid, false)
         set_direct_call(target, mid, target.instance_of?(Class) ? :class : :module, manager, configuration)
         load_binary(manager, configuration, suggestion, iseq)
@@ -182,11 +186,11 @@ module CastOff
       @@original_singleton_method_iseq.delete([obj, mid])
     end
 
-    def compile_singleton_method(obj, mid, bind_or_typemap = nil, typemap = nil)
+    def compile_singleton_method(obj, mid, bind_or_typemap = nil, typemap = nil, force_compilation = false)
       execute_no_hook() do
         mid, bind, typemap = parse_arguments(mid, bind_or_typemap, typemap)
         iseq = @@original_singleton_method_iseq[[obj, mid]] || get_iseq(obj, mid, true)
-        manager, configuration, suggestion = compile_iseq(iseq, mid, typemap, false, bind)
+        manager, configuration, suggestion = compile_iseq(iseq, mid, typemap, false, bind, force_compilation)
         manager.compilation_target_is_a(obj, mid, true)
         set_direct_call(obj, mid, :singleton, manager, configuration)
         load_binary(manager, configuration, suggestion, iseq)
@@ -205,7 +209,7 @@ module CastOff
       if !@@loaded_binary[key]
         execute_no_hook() do
           bind = block.binding
-          manager, configuration, suggestion = compile_iseq(iseq, nil, typemap, false, bind)
+          manager, configuration, suggestion = compile_iseq(iseq, nil, typemap, false, bind, false)
           load_binary(manager, configuration, suggestion, iseq)
           @@loaded_binary[key] = manager.signiture
         end
@@ -257,7 +261,7 @@ module CastOff
       end
     end
 
-    def compile_iseq(iseq, mid, typemap, is_proc, bind)
+    def compile_iseq(iseq, mid, typemap, is_proc, bind, force_compilation)
       filepath, line_no = *iseq.to_a.slice(7, 2)
       raise(UnsupportedError.new(<<-EOS)) unless filepath && File.exist?(filepath)
 
@@ -268,7 +272,7 @@ Currently, CastOff cannot compile method which source file is not exist.
       suggestion = Suggestion.new(iseq, @@suggestion_io)
       configuration = nil
       manager.do_atomically() do
-        configuration = __compile(iseq, manager, typemap || {}, mid, is_proc, bind, suggestion)
+        configuration = __compile(iseq, manager, typemap || {}, mid, is_proc, bind, suggestion, force_compilation)
       end
       bug() unless configuration.instance_of?(Configuration)
       [manager, configuration, suggestion]
@@ -328,9 +332,8 @@ Currently, CastOff cannot compile method which source file is not exist.
       return false unless update_p
       ann = manager.load_annotation() || {}
       bug() unless ann.instance_of?(Hash)
-      manager.version_up()
       begin
-        __send__(singleton ? 'compile_singleton_method' : 'compile', target, mid, ann)
+        __send__(singleton ? 'compile_singleton_method' : 'compile', target, mid, ann, nil, true)
         vlog("re-compilation success: #{target}#{singleton ? '.' : '#'}#{mid}")
       rescue => e
         vlog("re-compilation failed: #{target}#{singleton ? '.' : '#'}#{mid} => #{e}")
@@ -340,8 +343,8 @@ Currently, CastOff cannot compile method which source file is not exist.
 
     class ReCompilation < StandardError; end
 
-    def __compile(iseq, manager, annotation, mid, is_proc, bind, suggestion)
-      if reuse_compiled_code? && !manager.target_file_updated?
+    def __compile(iseq, manager, annotation, mid, is_proc, bind, suggestion, force_compilation)
+      if !force_compilation && reuse_compiled_code? && !manager.target_file_updated?
         # already compiled
         if CastOff.development? || !CastOff.skip_configuration_check? || manager.last_configuration_enabled_development?
           conf = Configuration.new(annotation, bind)
@@ -361,6 +364,7 @@ Currently, CastOff cannot compile method which source file is not exist.
           union_base_configuration(conf, manager)
         end
       else
+        manager.clear_base_configuration() if manager.target_file_updated?
         conf = Configuration.new(annotation, bind)
         union_base_configuration(conf, manager)
       end
@@ -384,6 +388,7 @@ Currently, CastOff cannot compile method which source file is not exist.
       require 'cast_off/compile/stack'
       require 'cast_off/compile/information'
       conf.validate()
+      manager.version_up()
       bug() unless conf
       dep = Dependency.new()
       block_inlining = true
@@ -418,17 +423,17 @@ Currently, CastOff cannot compile method which source file is not exist.
           end
           bind = bind.bind if bind
           skip = false
-          if singleton
-            iseq = @@original_singleton_method_iseq[[klass, mid]] || get_iseq(klass, mid, true)
-          else
-            begin
+          begin
+            if singleton
+              iseq = @@original_singleton_method_iseq[[klass, mid]] || get_iseq(klass, mid, true)
+            else
               t = override_target(klass, mid)
               iseq = @@original_instance_method_iseq[[t, mid]] || get_iseq(klass, mid, false)
-            rescue CompileError, UnsupportedError
-              @@skipped |= [entry]
-              dlog("skip: entry = #{entry}")
-              skip = true
             end
+          rescue CompileError, UnsupportedError
+            @@skipped |= [entry]
+            dlog("skip: entry = #{entry}")
+            skip = true
           end
           f, l = *iseq.to_a.slice(7, 2) unless skip
           if !skip && f == file && l == line

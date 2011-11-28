@@ -3,7 +3,7 @@ $(srcdir)/generated_c_include/unbox_api.h:	\
 	$(RUBY) -- $(srcdir)/generated_c_include/unbox_api.h.rb > $@
 
 
-cast_off.c:					\
+$(srcdir)/cast_off.c:				\
   $(srcdir)/ruby_source/1.9.3/debug.h		\
   $(srcdir)/ruby_source/1.9.3/gc.h		\
   $(srcdir)/ruby_source/1.9.3/id.h		\
@@ -51,7 +51,7 @@ cast_off.c:					\
 	$(RUBY) -- $(srcdir)/cast_off.c.rb $(srcdir)/ruby_source $(srcdir)/generated_c_include > $@
 
 
-cast_off.o:					\
+$(srcdir)/cast_off.o:				\
   $(arch_hdrdir)/ruby/config.h			\
   $(hdrdir)/ruby/defines.h			\
   $(hdrdir)/ruby/intern.h			\

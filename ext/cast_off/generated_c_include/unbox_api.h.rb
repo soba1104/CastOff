@@ -9,91 +9,129 @@ ERB.new(DATA.read(), 0, '%-').run();
 #endif
 __END__
 #define CBOOL2RBOOL(b) ((b) ? Qtrue : Qfalse)
-#ifdef INJECT_GUARD
-#define CFIX2RFIX(b) (FIXABLE?((b)) ? LONG2FIX((b)) : rb_raise(rb_eCastOffExecutionError, TYPE_ERROR_MESSAGE()))
-#else
-#define CFIX2RFIX(b) LONG2FIX((b))
-#endif
 static inline VALUE CDOUBLE2RINT(double f)
 {
   if (f > 0.0) f = floor(f);
   if (f < 0.0) f = ceil(f);
   return FIXABLE(f) ? LONG2FIX((double)f) : rb_dbl2big(f);
 }
+static inline VALUE PLUS(long a, long b)
+{
+  long c = a + b;
+  if (FIXABLE(c)) {
+    return LONG2FIX(c);
+  } else {
+    return rb_big_plus(rb_int2big(a), rb_int2big(b));
+  }
+}
+static inline VALUE MINUS(long a, long b)
+{
+  long c = a - b;
+  if (FIXABLE(c)) {
+    return LONG2FIX(c);
+  } else {
+    return rb_big_minus(rb_int2big(a), rb_int2big(b));
+  }
+}
+static inline VALUE MULT(long a, long b)
+{
+  if (a == 0) {
+    return LONG2FIX(0);
+  } else {
+    volatile long c = a * b;
+    if (FIXABLE(c) && c / a == b) {
+      return LONG2FIX(c);
+    } else {
+      return rb_big_mul(rb_int2big(a), rb_int2big(b));
+    }
+  }
+}
 
 %# arg size, [type0, type1, ...]
 %[['float',
 %  {'-' => 'uminus'},
 %  0,
+%  :unary_operator,
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {},
 %  {'VALUE' => 'DBL2NUM', 'double' => ''}],
 % ['float',
 %  {'' => 'to_f'},
 %  0,
+%  :unary_operator,
 %  {'VALUE' => ''},
 %  {},
 %  {'VALUE' => '', 'double' => 'RFLOAT_VALUE'}],
 % ['float',
 %  {'' => 'to_i'},
 %  0,
+%  :unary_operator,
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {},
 %  {'VALUE' => 'CDOUBLE2RINT'}],
 % ['fixnum',
 %  {'-' => 'uminus'},
 %  0,
+%  :unary_operator,
 %  {'VALUE' => 'FIX2LONG', 'long' => ''},
 %  {},
-%  {'VALUE' => 'CFIX2RFIX', 'long' => ''}],
+%  {'VALUE' => 'LONG2NUM'}],
 % ['fixnum',
 %  {'(double)' => 'to_f'},
 %  0,
+%  :unary_operator,
 %  {'VALUE' => 'FIX2LONG', 'long' => ''},
 %  {},
 %  {'VALUE' => 'DBL2NUM', 'double' => ''}],
 % ['float_float',
 %  {'+' => 'plus', '-' => 'minus', '*' => 'mult', '/' => 'div'},
 %  1,
+%  :binary_operator,
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {'VALUE' => 'DBL2NUM', 'double' => ''}],
 % ['float_float',
 %  {'>' => 'gt', '>=' => 'ge', '<' => 'lt', '<=' => 'le', '==' => 'eq', '==' => 'eqq'},
 %  1,
+%  :binary_operator,
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {'VALUE' => 'CBOOL2RBOOL'}],
 % ['fixnum_fixnum',
-%  {'+' => 'plus', '-' => 'minus', '*' => 'mult', '/' => 'div'},
+%  {'PLUS' => 'plus', 'MINUS' => 'minus', 'MULT' => 'mult'},
 %  1,
+%  :function,
 %  {'VALUE' => 'FIX2LONG', 'long' => ''},
 %  {'VALUE' => 'FIX2LONG', 'long' => ''},
-%  {'VALUE' => 'CFIX2RFIX', 'long' => ''}],
+%  {'VALUE' => ''}],
 % ['fixnum_float',
-%  {'+' => 'plus', '-' => 'minus', '*' => 'mult', '/' => 'div'},
+%  {'+' => 'plus', '-' => 'minus', '*' => 'mult'},
 %  1,
+%  :binary_operator,
 %  {'VALUE' => '(double)FIX2LONG', 'long' => ''},
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {'VALUE' => 'DBL2NUM', 'double' => ''}],
 % ['fixnum_float',
 %  {'>' => 'gt', '>=' => 'ge', '<' => 'lt', '<=' => 'le', '==' => 'eq', '==' => 'eqq'},
 %  1,
+%  :binary_operator,
 %  {'VALUE' => '(double)FIX2LONG', 'long' => ''},
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {'VALUE' => 'CBOOL2RBOOL'}],
 % ['float_fixnum',
 %  {'+' => 'plus', '-' => 'minus', '*' => 'mult', '/' => 'div'},
 %  1,
+%  :binary_operator,
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {'VALUE' => '(double)FIX2LONG', 'long' => ''},
 %  {'VALUE' => 'DBL2NUM', 'double' => ''}],
 % ['float_fixnum',
 %  {'>' => 'gt', '>=' => 'ge', '<' => 'lt', '<=' => 'le', '==' => 'eq', '==' => 'eqq'},
 %  1,
+%  :binary_operator,
 %  {'VALUE' => 'RFLOAT_VALUE', 'double' => ''},
 %  {'VALUE' => '(double)FIX2LONG', 'long' => ''},
-%  {'VALUE' => 'CBOOL2RBOOL'}]].each do |(function_name, h, argc, reciever_converter, arguments_converter, return_value_converter)|
+%  {'VALUE' => 'CBOOL2RBOOL'}]].each do |(function_name, h, argc, operation, reciever_converter, arguments_converter, return_value_converter)|
 %  arguments_decls = arguments_converter.keys
 %  reciever_decls  = reciever_converter.keys
 %  return_value_decls  = return_value_converter.keys
@@ -117,11 +155,17 @@ static inline VALUE CDOUBLE2RINT(double f)
 static inline <%= return_value %>
 cast_off_inline_<%= function_name %>_<%= name %>_<%= suffix %>(<%= parameter.join(', ') %>)
 {
-%      if argc > 0
-  return <%= return_value_converter[return_value] %>(<%= statement.join(" #{operator} ") %>);
-%      else
-%        raise unless statement.size == 1
+%      case operation
+%      when :unary_operator
+%        raise unless argc == 0 && statement.size == 1
   return <%= return_value_converter[return_value] %>(<%= operator %>(<%= statement.first %>));
+%      when :binary_operator
+%        raise unless argc == 1 && statement.size == 2
+  return <%= return_value_converter[return_value] %>(<%= statement.join(" #{operator} ") %>);
+%      when :function
+  return <%= return_value_converter[return_value] %>(<%= operator %>(<%= statement.join(", ") %>));
+%      else
+%        raise
 %      end
 }
 %    end

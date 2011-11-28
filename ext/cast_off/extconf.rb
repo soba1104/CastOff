@@ -12,8 +12,8 @@ $defs.push '-DCABI_OPERANDS' if enable_config 'cabi-operands', true
 $defs.push '-DCABI_PASS_CFP' if enable_config 'cabi-pass-cfp', true
 
 $INCFLAGS << ' -I$(srcdir)/ruby_source'
-$objs = %w'cast_off.o'
-$srcs = %w'cast_off.c.rb'
+$objs = %w'$(srcdir)/cast_off.o'
+$srcs = %w'$(srcdir)/cast_off.c.rb'
 create_header
 create_makefile 'cast_off'
 

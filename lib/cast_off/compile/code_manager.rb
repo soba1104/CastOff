@@ -12,12 +12,21 @@ module CastOff
 
       attr_reader :signiture, :compilation_target
 
+      def self.generate_signiture(unique_string)
+        unique_string.gsub(/\.|\/|-|:/, "_")
+      end
+
+      def self.base_directory_name()
+        p = generate_signiture(File.expand_path(__FILE__))
+        p.gsub(/_lib_ruby_gems_1_9_1_gems_/, '.').gsub(/_lib_cast_off_compile_code_manager_rb$/, '')
+      end
+
       CastOffDir = "#{ENV["HOME"]}/.CastOff"
       FileUtils.mkdir(CastOffDir) unless File.exist?(CastOffDir)
-      BaseDir = "#{CastOffDir}/#{File.expand_path(__FILE__).gsub(/\.|\/|-|:/, "_")}"
+      BaseDir = "#{CastOffDir}/#{base_directory_name()}"
       FileUtils.mkdir(BaseDir) unless File.exist?(BaseDir)
 
-      @@program_name = File.expand_path($PROGRAM_NAME)
+      @@program_name = File.basename($PROGRAM_NAME)
       CastOff::Compiler.class_eval do
         def program_name=(dir)
           CastOff::Compiler::CodeManager.class_variable_set(:@@program_name, dir)
@@ -25,7 +34,7 @@ module CastOff
       end
 
       def self.program_dir()
-        dir = "#{BaseDir}/#{@@program_name.gsub(/\.|\/|-|:/, "_")}"
+        dir = "#{BaseDir}/#{generate_signiture(@@program_name)}"
         FileUtils.mkdir(dir) unless File.exist?(dir)
         dir
       end
@@ -92,12 +101,12 @@ module CastOff
       end
 
       def version_up()
-        bug() unless File.exist?(@versionpath)
-        v = File.read(@versionpath).to_i
+        v = File.exist?(@versionpath) ? File.read(@versionpath).to_i : @version
         bug() if v < 0
         v = [@version, v].max + 1
-        vlog("version: #{@version} => #{v}")
+        dlog("version: #{@version} => #{v}")
         File.open(@versionpath, 'w'){|f| f.write(v)}
+        set_path()
       end
 
       def fetch_version()
@@ -110,11 +119,28 @@ module CastOff
         version.to_i
       end
 
+      FILEPATH_LIMITED = CONFIG["host_os"].match(/mswin/)
+      FILEPATH_LIMIT = 255
+      def check_length()
+        return unless FILEPATH_LIMITED
+        raise(UnsupportedError.new(<<-EOS)) if @longpath.length > FILEPATH_LIMIT
+
+Failed to generate signiture for #{@filepath}:#{@line_no}.
+Signiture is generated from filepath and line_no.
+Max length of signiture is #{FILEPATH_LIMIT} in this environment.
+        EOS
+      end
+
       def initialize(filepath, line_no)
         @filepath = filepath
         @line_no = line_no
-        base_sign = "#{@filepath}_#{@line_no}".gsub(/\.|\/|-|:/, "_")
-        dir = self.class.program_dir()
+        @compilation_target = nil
+        set_path()
+      end
+
+      def set_path()
+        base_sign = CodeManager.generate_signiture("#{@filepath}_#{@line_no}")
+        dir = CodeManager.program_dir()
         @dstdir = "#{dir}/#{base_sign}"
         @lockpath = "#{@dstdir}/lock"
         @versionfile = "version"
@@ -131,7 +157,8 @@ module CastOff
         @development_mark_file = "development"
         @development_mark_path = "#{@dstdir}/#{@development_mark_file}"
         @dstbin = "#{@dstdir}/#{@signiture}.so"
-        @compilation_target = nil
+        @longpath = @base_configuration_path # FIXME
+        check_length()
       end
 
       class CompilationTarget

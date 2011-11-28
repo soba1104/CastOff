@@ -616,7 +616,7 @@ Call site is (#{insn}).
         if @configuration.development?
           @sampling_variable.each do |var|
             next if var.is_a?(Literal)
-            s << "  sampling_variable(#{var}, ID2SYM(rb_intern(#{var.source.inspect})));"
+            s << "  sampling_variable(#{var.boxed_form}, ID2SYM(rb_intern(#{var.source.inspect})));"
           end
         end
         s.empty? ? nil : s.join("\n")
