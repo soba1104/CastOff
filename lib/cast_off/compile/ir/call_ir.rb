@@ -690,11 +690,7 @@ module CastOff
               ret << "  #{@return_value} = rb_reg_nth_match((int)(#{type >> 1}), rb_backref_get());"
             end
           else
-            raise(UnsupportedError.new(<<-EOS))
-
-$&, $`, $\, $+, $0...$9 are incompatible.
-If you want to use these variables, use CastOff.allow_builtin_variable_incompatibility(true).
-            EOS
+            bug()
           end
         end
         bug() unless param.empty?
@@ -1723,7 +1719,6 @@ You should not use #{@method_id} method in compilation target of CastOff.
         [MethodWrapper.new(FixnumWrapper, :>), 2]      => [['gt',           [Fixnum], nil, [TrueClass,  FalseClass], false, false]],
         [MethodWrapper.new(FixnumWrapper, :==), 2]     => [['eq',           [Fixnum], nil, [TrueClass,  FalseClass], false, false]],
         [MethodWrapper.new(FixnumWrapper, :===), 2]    => [['eqq',          [Fixnum], nil, [TrueClass,  FalseClass], false, false]],
-        [MethodWrapper.new(FixnumWrapper, :!=), 2]     => [['neq',          [Fixnum], nil, [TrueClass,  FalseClass], false, false]],
         [MethodWrapper.new(FixnumWrapper, :&), 2]      => [['and',          [Fixnum], Fixnum, nil, false, false]], # FIXME
         [MethodWrapper.new(FloatWrapper,  :+), 2]      => [['float_plus',   [Float],   nil, Float, true, true], ['fixnum_plus',   [Fixnum],  nil, Float, true, true]],
         [MethodWrapper.new(FloatWrapper,  :-), 2]      => [['float_minus',  [Float],   nil, Float, true, true], ['fixnum_minus',  [Fixnum],  nil, Float, true, true]],
@@ -1739,6 +1734,10 @@ You should not use #{@method_id} method in compilation target of CastOff.
                                                            ['fixnum_gt',    [Fixnum],  nil, [TrueClass,  FalseClass], false, true]],
         [MethodWrapper.new(FloatWrapper,  :==), 2]     => [['float_eq',     [Float],   nil, [TrueClass,  FalseClass], false, true],
                                                            ['fixnum_eq',    [Fixnum],  nil, [TrueClass,  FalseClass], false, true]],
+        [MethodWrapper.new(FixnumWrapper, :!=), 2]     => [['fixnum_neq',   [Fixnum],  nil, [TrueClass,  FalseClass], false, true],
+                                                           ['float_neq',    [Float],   nil, [TrueClass,  FalseClass], false, true]],
+        [MethodWrapper.new(FloatWrapper,  :!=), 2]     => [['float_neq',    [Float],   nil, [TrueClass,  FalseClass], false, true],
+                                                           ['fixnum_neq',   [Fixnum],  nil, [TrueClass,  FalseClass], false, true]],
         [MethodWrapper.new(FloatWrapper,  :===), 2]    => [['float_eqq',    [Float],   nil, [TrueClass,  FalseClass], false, true],
                                                            ['fixnum_eqq',   [Fixnum],  nil, [TrueClass,  FalseClass], false, true]],
         [MethodWrapper.new(FixnumWrapper, :-@), 1]     => [['uminus',       [], nil, [Fixnum, Bignum], false, true]],
@@ -2034,8 +2033,8 @@ You should not use #{@method_id} method in compilation target of CastOff.
   } else {
 %  if funcall
   <%= funcall_code(nil, id, recv, param, @argc) %>
-%  else
-    rb_bug("type mismatch: method name = <%= @method_id %>");
+%  else # empty_method_table_p に通った特異クラスがくる可能性がある。
+  <%= funcall_code(nil, id, recv, param, @argc) %>
 %  end
   }
 %end
@@ -2117,7 +2116,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
               else_class = types[else_index]
               else_code = not_funcall_code(else_class, @method_id, recv, param, @argc)
               if !else_code
-                @dependency.add(else_class, @method_id, false) if else_class.method_defined?
+                @dependency.add(else_class, @method_id, false)
                 else_code = funcall_code(else_class, id, recv, param, @argc)
               end
               if nil_code == else_code

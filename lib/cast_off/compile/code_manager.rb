@@ -229,8 +229,12 @@ Max length of signiture is #{FILEPATH_LIMIT} in this environment.
           log = `#{makecmd} 2>&1`
           if $? != 0
             dlog(c_source)
-            dlog(log)
-            bug("failed to compile c source: status = (#{$?})") 
+            raise(CompileError.new(<<-EOS))
+
+Failed to compile c source: status = (#{$?})
+---------- Error ----------
+#{log}
+            EOS
           else
             dlog(c_source, 2)
             dlog(log, 2)

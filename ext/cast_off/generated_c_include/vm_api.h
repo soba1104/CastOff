@@ -1,3 +1,11 @@
+static inline int empty_method_table_p(VALUE klass)
+{
+  st_table *mtbl = RCLASS_M_TBL(klass);
+
+  if (!mtbl) rb_bug("empty_method_table_p: shoult not be reached");
+  return mtbl->num_entries == 0;
+}
+
 static VALUE handle_blockarg(VALUE blockarg)
 {
   VALUE thval = rb_thread_current();

@@ -125,9 +125,6 @@ cast_off [options] PathOfTargetProgram ArgumentsOfTargetProgram
 --run
 Execute target program with compiled methods.
 
---deoptimize
-Enable deoptimization.
-
 --clear
 Clear profile information and delete compiled methods.
 If you want to clear profile information and compiled methods of target name "foo",

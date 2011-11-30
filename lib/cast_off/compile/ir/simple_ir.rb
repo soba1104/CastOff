@@ -379,6 +379,15 @@ Call site is (#{insn}).
         when :cast_off_setdvar
           irs << SubIR.new(TmpVariable.new(stack.pop()), DynamicVariable.new(*argv), insn, cfg)
         when :getspecial
+          type = insn.argv.last
+          bug() if type == 0
+          unless translator.configuration.allow_builtin_variable_incompatibility?
+            raise(UnsupportedError.new(<<-EOS))
+
+$&, $`, $\, $+, $0...$9 are incompatible.
+If you want to use these variables, use CastOff.allow_builtin_variable_incompatibility(true).
+            EOS
+          end
           param = []
           irs << Getspecial.new(param, 0, TmpVariable.new(stack.push()), insn, cfg)
         when :jump, :cast_off_enter_block, :cast_off_leave_block

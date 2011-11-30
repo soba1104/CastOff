@@ -447,7 +447,7 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
     def self.load(io)
       begin
         conf = Marshal.load(io)
-      rescue NameError
+      rescue NameError, ArgumentError
         return nil
       end
       bug() unless conf.instance_of?(Configuration)
@@ -2333,7 +2333,7 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
       :@@reuse_compiled_code                     => [true,  false, true],
       :@@allow_builtin_variable_incompatibility  => [false, true,  false],
       :@@prefetch_constant                       => [true,  true,  false],
-      :@@deoptimize                              => [false, true,  true],
+      :@@deoptimize                              => [true,  true,  true],
       :@@development                             => [false, true,  true],
       :@@alert_override                          => [true,  true,  false],
       :@@skip_configuration_check                => [false, false, true],

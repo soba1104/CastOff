@@ -833,7 +833,7 @@ static VALUE cast_off_class_wrapper_each_method_search_target(VALUE self, VALUE 
     st_data_t body;
 
     if (!klass) {
-      method_not_found(wrapper->klass, mid, 1);
+      break;
     }
     if (TYPE(klass) == T_ICLASS) {
       VALUE module = RBASIC(klass)->klass;

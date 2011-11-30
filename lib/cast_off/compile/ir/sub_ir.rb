@@ -64,10 +64,10 @@ module CastOff::Compiler
         ret = []
         case @src
         when Argument
-          if @translator.inline_block?
-            # nothing to do
-          else
+          if !@translator.inline_block? && @insn.iseq.root?
             ret << "  #{@dst} = #{@src.lvar};"
+          else
+            # nothing to do
           end
         when ConstWrapper
           @insn.iseq.reference_constant

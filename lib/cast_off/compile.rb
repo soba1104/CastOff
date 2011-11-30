@@ -445,8 +445,9 @@ Currently, CastOff cannot compile method which source file is not exist.
                 CastOff.compile(klass, mid, bind)
               end
               vlog("load #{klass}##{mid}")
-            rescue ArgumentError => e
-              # dependency の Marshal.load に失敗
+            rescue ArgumentError, NameError => e
+              # ArgumentError: dependency の Marshal.load に失敗
+              # NameError: prefetch constant での定数参照に失敗
               vlog("skip: entry = #{entry[0]}#{entry[2] ? '.' : '#'}#{entry[1]}, #{e}")
               CodeManager.delete_from_compiled(entry)
             rescue UnsupportedError => e
@@ -485,6 +486,16 @@ Currently, CastOff cannot compile method which source file is not exist.
     Module.class_eval do
       define_method(:autoload) do |*args|
         raise(ExecutionError.new("Currently, CastOff doesn't support Module#autoload"))
+      end
+    end
+    Kernel.module_eval do
+      def set_trace_func(*args, &p)
+        raise(ExecutionError.new("Currently, CastOff doesn't support set_trace_func"))
+      end
+    end
+    Thread.class_eval do
+      def set_trace_func(*args, &p)
+        raise(ExecutionError.new("Currently, CastOff doesn't support Thread#set_trace_func"))
       end
     end
 
@@ -581,7 +592,7 @@ Currently, CastOff cannot compile method which source file is not exist.
         end
         vlog("#{index}: compile #{klass}#{singleton ? '.' : '#'}#{mid}")
         [klass, mid, singleton] + location + [Configuration::BindingWrapper.new(bind)] # klass, mid, file, line, binding
-      rescue UnsupportedError => e
+      rescue UnsupportedError, CompileError => e
         vlog("#{index}: failed to compile #{klass}#{singleton ? '.' : '#'}#{mid} (#{e.message})")
         nil
       end

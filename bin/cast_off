@@ -8,7 +8,6 @@ this = File.expand_path("#{Gem.bindir()}/#{File.basename(__FILE__)}")
 step = nil
 verbose = false
 clear = false
-deoptimize = false
 threshold = 100
 name = nil
 
@@ -21,9 +20,6 @@ EOS
 opt.separator("\n  Options:")
 opt.on('--run', <<-EOS.strip) {|v| step = 'run' }
                                      Execute [programfile] with compiled codes.
-EOS
-opt.on('--deoptimize', <<-EOS.strip) {|v| deoptimize = true }
-                                     Enable deoptimization.
 EOS
 opt.on('--threshold=COUNT', <<-EOS.strip, Integer) {|v| threshold = v }
                                      Compile method which is executed more than COUNT.
@@ -107,7 +103,6 @@ end
 configuration = <<-EOS
 CastOff.program_name = #{name.inspect}
 CastOff.skip_configuration_check(true)
-CastOff.deoptimize(#{deoptimize})
 CastOff.use_default_configuration()
 EOS
 eval(configuration, binding)
@@ -119,7 +114,7 @@ case step
 when nil
   STDERR.puts("-------------------------------- compilation start: threshold = #{threshold}, name = #{name}, profiling = ruby #{args} --------------------------------")
   2.times do |i|
-    system("#{this} --step-#{i + 1} --threshold=#{threshold} --name=#{name} #{deoptimize ? '--deoptimize' : ''} #{verbose ? '--verbose' : ''} #{args}")
+    system("#{this} --step-#{i + 1} --threshold=#{threshold} --name=#{name} #{verbose ? '--verbose' : ''} #{args}")
     unless $? == 0
       STDERR.puts("Failed to execute 'ruby #{args}'")
       exit
@@ -161,7 +156,7 @@ CastOff.autoload()
 Compilation finished successfully.
 You can execute #{script} with compiled codes by use of following command.
 
-$cast_off --run --name=#{name}#{deoptimize ? ' --deoptimize ' : ' '}#{args}
+$cast_off --run --name=#{name} #{args}
 ----------------------------------------------------------------------------------------
     EOS
     STDERR.puts(msg)

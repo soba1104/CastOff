@@ -101,7 +101,11 @@ static void sampling_variable(VALUE val, VALUE sym)
       klass = val;
       singleton_class_or_module_obj_p = Qtrue;
     } else {
-      klass = rb_cCastOffSingletonClass;
+      if (empty_method_table_p(klass)) {
+        klass = rb_obj_class(val);
+      } else {
+        klass = rb_cCastOffSingletonClass;
+      }
     }
   }
 
@@ -122,9 +126,17 @@ static void __sampling_poscall(VALUE val, VALUE method_klass, VALUE method_id)
 
   if (FL_TEST(method_klass, FL_SINGLETON)) {
     VALUE recv = rb_ivar_get(method_klass, rb_intern("__attached__"));
-    if ((rb_obj_class(recv) == rb_cClass || rb_obj_class(recv) == rb_cModule) && rb_class_of(recv) == method_klass) {
-      method_klass = recv;
-      class_method_or_module_function_p = Qtrue;
+    if (rb_class_of(recv) == method_klass) {
+      if ((rb_obj_class(recv) == rb_cClass || rb_obj_class(recv) == rb_cModule)) {
+        method_klass = recv;
+        class_method_or_module_function_p = Qtrue;
+      } else {
+        if (empty_method_table_p(method_klass)) {
+          method_klass = rb_obj_class(recv);
+        } else {
+          method_klass = rb_cCastOffSingletonClass;
+        }
+      }
     } else {
       method_klass = rb_cCastOffSingletonClass;
     }
@@ -153,7 +165,11 @@ static void __sampling_poscall(VALUE val, VALUE method_klass, VALUE method_id)
       klass = val;
       singleton_class_or_module_obj_p = Qtrue;
     } else {
-      klass = rb_cCastOffSingletonClass;
+      if (empty_method_table_p(klass)) {
+        klass = rb_obj_class(val);
+      } else {
+        klass = rb_cCastOffSingletonClass;
+      }
     }
   }
 
@@ -391,14 +407,6 @@ static VALUE cast_off_initialize_fptr_<%= signiture() %>(VALUE dummy)
   }
 %end
   return Qnil;
-}
-
-static inline int empty_method_table_p(VALUE klass)
-{
-  st_table *mtbl = RCLASS_M_TBL(klass);
-
-  if (!mtbl) rb_bug("empty_method_table_p: shoult not be reached");
-  return mtbl->num_entries == 0;
 }
 
 %@throw_exception_functions.each do |(func, name)|
@@ -887,7 +895,8 @@ Source line is #{@root_iseq.source_line}.
 
     def allocate_function_pointer(klass, mid, convention, argc)
       bug() unless klass.is_a?(ClassWrapper)
-      fptr = "fptr_#{klass}_#{@namespace.new(mid).name}"
+      suffix = klass.singleton? ? 'singleton' : 'instance'
+      fptr = "fptr_#{klass}_#{@namespace.new(mid).name}_#{suffix}"
       fptr.gsub!(/:/, '_')
       ids = klass.to_s.split("::")
       ids.each{|k| bug() if k == ''}
@@ -1136,6 +1145,10 @@ Source line is #{@root_iseq.source_line}.
       b << InsnInfo.new([:cast_off_enter_block, loop_label], insn.iseq, -1, -1, true, prep.depth + prep.stack_usage())
       b << cont_label
       bug() unless c_depth + 1 == prep.depth + prep.stack_usage()
+      c_lvars.each_with_index do |l, index|
+        op = (index < c_iseq.args.arg_size) ? :cast_off_decl_arg : :cast_off_decl_var
+        b << InsnInfo.new([op] + l, c_iseq, -1, -1, true, c_depth)
+      end
       b << InsnInfo.new([:cast_off_cont, loop_id, c_args, insn], c_iseq, -1, -1, true, c_depth)
       if c_iseq.args.opt?
         bug() if inline_block?
@@ -1565,8 +1578,9 @@ Currently, CastOff cannot handle this constant reference.
         body.unshift(InsnInfo.new([:cast_off_fetch_args, [must, opt, rest, post, block, lvars.slice(0, @arg_size)]], @root_iseq, -1, -1, true, 0))
       end
 
+      bug() unless @root_iseq.args.arg_size == @arg_size
       decl = []
-      lvars.each_with_index do |l, index|
+      @root_iseq.lvars.each_with_index do |l, index|
         if index < @arg_size
           bug() if execute?
           op = :cast_off_decl_arg
