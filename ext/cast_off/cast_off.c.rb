@@ -447,6 +447,23 @@ static VALUE cast_off_get_iseq(VALUE self, VALUE obj, VALUE mid, VALUE singleton
   rb_raise(rb_eCastOffUnsupportedError, "%s (%s#%s)", msg, RSTRING_PTR(name), rb_id2name(SYM2ID(mid)));
 }
 
+static VALUE cast_off_get_compilable_iseq(VALUE self, VALUE obj, VALUE mid, VALUE singleton_p)
+{
+  rb_method_entry_t *me;
+  VALUE km = (RTEST(singleton_p)) ? rb_class_of(obj) : obj;
+
+  me = search_method(km, SYM2ID(mid));
+  if (!me) {
+    return Qnil;
+  }
+
+  if (me->def->type == VM_METHOD_TYPE_ISEQ) {
+    return me->def->body.iseq->self;
+  } else {
+    return Qnil;
+  }
+}
+
 static VALUE cast_off_get_iseq_from_block(VALUE self, VALUE block)
 {
   rb_iseq_t *iseq;
@@ -471,7 +488,7 @@ static VALUE cast_off_get_iseq_line(VALUE self, VALUE iseqval)
   rb_iseq_t *iseq;
 
   if (rb_class_of(iseqval) != rb_cISeq) {
-    rb_bug("cast_off_get_iseq_signiture: shoult not be reached");
+    rb_bug("cast_off_get_iseq_line: shoult not be reached");
   }
 
   iseq = DATA_PTR(iseqval);
@@ -484,7 +501,7 @@ static VALUE cast_off_get_iseq_filepath(VALUE self, VALUE iseqval)
   rb_iseq_t *iseq;
 
   if (rb_class_of(iseqval) != rb_cISeq) {
-    rb_bug("cast_off_get_iseq_signiture: shoult not be reached");
+    rb_bug("cast_off_get_iseq_filepath: shoult not be reached");
   }
 
   iseq = DATA_PTR(iseqval);
@@ -1360,8 +1377,8 @@ static VALUE cast_off_hook_method_invocation(VALUE self, VALUE proc)
   return Qtrue;
 }
 
-static ID id_method_added, id_singleton_method_added, id_initialize_copy, id_clone;
-VALUE cast_off_ignore_overridden_p(VALUE dummy, VALUE target, VALUE midsym)
+static ID id_initialize_copy, id_clone;
+VALUE cast_off_ignore_overridden_p(VALUE dummy)
 {
   VALUE thval = rb_thread_current();
   rb_thread_t *th = DATA_PTR(thval);
@@ -1369,12 +1386,11 @@ VALUE cast_off_ignore_overridden_p(VALUE dummy, VALUE target, VALUE midsym)
   ID mid;
 
   cfp = th->cfp; /* this method frame */
-  cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp); /* method_added or singleton_method_added frame */
+  cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp); /* method_added or singleton_method_added or include or extend frame */
   if (!cfp->me) {
     rb_bug("cast_off_ignore_overridden_p: should not be reached(0)");
   }
-  mid = cfp->me->called_id;
-  if (mid != id_method_added && mid != id_singleton_method_added) {
+  if (cfp->me->def->type != VM_METHOD_TYPE_BMETHOD) {
     rb_bug("cast_off_ignore_overridden_p: should not be reached(1)");
   }
   cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
@@ -1393,7 +1409,7 @@ VALUE cast_off_ignore_overridden_p(VALUE dummy, VALUE target, VALUE midsym)
   return Qtrue;
 }
 
-VALUE cast_off_singleton_method_added_p(VALUE dummy)
+VALUE cast_off_current_method_id(VALUE dummy)
 {
   VALUE thval = rb_thread_current();
   rb_thread_t *th = DATA_PTR(thval);
@@ -1401,42 +1417,49 @@ VALUE cast_off_singleton_method_added_p(VALUE dummy)
   ID mid;
 
   cfp = th->cfp; /* this method frame */
-  cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp); /* method_added or singleton_method_added frame */
+  cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp); /* target frame */
   if (!cfp->me) {
-    rb_bug("cast_off_singleton_method_added_p: should not be reached(0)");
+    rb_bug("cast_off_current_method_id: should not be reached(0)");
+  }
+  if (cfp->me->def->type != VM_METHOD_TYPE_BMETHOD) {
+    rb_bug("cast_off_current_method_id: should not be reached(1)");
   }
   mid = cfp->me->called_id;
-  if (mid == id_method_added) {
-    return Qfalse;
+  if (!mid) {
+    rb_bug("cast_off_current_method_id: should not be reached(2)");
   }
-  if (mid == id_singleton_method_added) {
-    return Qtrue;
-  }
-  rb_bug("cast_off_singleton_method_added_p: should not be reached(1)");
+  return ID2SYM(mid);
 }
 
-static ID id_include, id_extend;
-VALUE cast_off_extend_p(VALUE dummy)
+VALUE cast_off_same_method_p(VALUE dummy, VALUE obj, VALUE mid)
 {
+  VALUE klass = rb_class_of(obj);
   VALUE thval = rb_thread_current();
   rb_thread_t *th = DATA_PTR(thval);
   rb_control_frame_t *cfp;
-  ID mid;
+  rb_method_entry_t *me0, *me1;
 
   cfp = th->cfp; /* this method frame */
-  cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp); /* method_added or singleton_method_added frame */
+  cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp); /* target frame */
   if (!cfp->me) {
-    rb_bug("cast_off_extend_p: should not be reached(0)");
+    rb_bug("cast_off_same_method_p: should not be reached(0)");
   }
-  mid = cfp->me->called_id;
-  if (mid == id_include) {
+  if (cfp->me->def->type != VM_METHOD_TYPE_BMETHOD) {
+    rb_bug("cast_off_same_method_p: should not be reached(1)");
+  }
+
+  me0 = cfp->me;
+  me1 = search_method(klass, SYM2ID(mid));
+
+  if (!me1) {
+    rb_bug("cast_off_same_method_p: should not be reached(2)");
+  }
+
+  if (rb_method_definition_eq(me0->def, me1->def)) {
+    return Qtrue;
+  } else {
     return Qfalse;
   }
-  if (mid == id_extend) {
-    return Qtrue;
-  }
-  /* TODO 別名に対応 */
-  rb_bug("cast_off_extend_p: should not be reached(1)");
 }
 
 /* for deoptimization */
@@ -1463,7 +1486,8 @@ void Init_cast_off(void)
   rb_eCastOffLoadError = rb_define_class_under(rb_mCastOff, "LoadError", rb_eStandardError);
   rb_eCastOffUnsupportedError = rb_define_class_under(rb_mCastOff, "UnsupportedError", rb_eStandardError);
   rb_define_method(rb_mCastOffCompiler, "override_target", cast_off_override_target, 2);
-  rb_define_method(rb_mCastOffCompiler, "get_iseq", cast_off_get_iseq, 3);
+  rb_define_method(rb_mCastOffCompiler, "get_iseq", cast_off_get_iseq, 3); /* TODO rename => get_compilable_iseq! */
+  rb_define_method(rb_mCastOffCompiler, "get_compilable_iseq", cast_off_get_compilable_iseq, 3);
   rb_define_method(rb_mCastOffCompiler, "get_iseq_from_block", cast_off_get_iseq_from_block, 1);
   rb_define_method(rb_mCastOffCompiler, "get_iseq_filepath", cast_off_get_iseq_filepath, 1);
   rb_define_method(rb_mCastOffCompiler, "get_iseq_line", cast_off_get_iseq_line, 1);
@@ -1471,6 +1495,8 @@ void Init_cast_off(void)
   rb_define_method(rb_mCastOffCompiler, "get_caller", cast_off_get_caller, 0);
   rb_define_method(rb_mCastOffCompiler, "hook_method_invocation", cast_off_hook_method_invocation, 1);
   rb_define_method(rb_mCastOffCompiler, "hook_class_definition_end", cast_off_hook_class_definition_end, 1);
+  rb_define_method(rb_mCastOffCompiler, "current_method_id", cast_off_current_method_id, 0);
+  rb_define_method(rb_mCastOffCompiler, "same_method?", cast_off_same_method_p, 2);
   rb_define_method(rb_mCastOffCompilerInstruction, "get_child_iseq", cast_off_get_child_iseq, 2);
   rb_define_const(rb_mCastOffCompilerInstruction, "ROBJECT_EMBED_LEN_MAX", LONG2FIX(ROBJECT_EMBED_LEN_MAX));
   rb_define_const(rb_mCastOffCompilerInstruction, "THROW_TAG_RETURN", LONG2FIX(TAG_RETURN));
@@ -1547,15 +1573,9 @@ void Init_cast_off(void)
   rb_define_const(rb_mCastOffCompiler, "Headers", gen_headers());
   rb_define_const(rb_mCastOffCompiler, "DEOPTIMIZATION_ISEQ_TABLE", rb_hash_new());
 
-  id_method_added = rb_intern("method_added");
-  id_singleton_method_added = rb_intern("singleton_method_added");
-  id_include = rb_intern("include");
-  id_extend = rb_intern("extend");
   id_initialize_copy = rb_intern("initialize_copy");
   id_clone = rb_intern("clone");
-  rb_define_singleton_method(rb_cCastOffDependency, "ignore_overridden?", cast_off_ignore_overridden_p, 2);
-  rb_define_singleton_method(rb_cCastOffDependency, "singleton_method_added?", cast_off_singleton_method_added_p, 0);
-  rb_define_singleton_method(rb_cCastOffDependency, "extend?", cast_off_extend_p, 0);
+  rb_define_singleton_method(rb_cCastOffDependency, "ignore_overridden?", cast_off_ignore_overridden_p, 0);
 
   rb_define_singleton_method(rb_mCastOffCompiler, "destroy_last_finish", cast_off_destroy_last_finish, 0);
   rb_funcall(rb_mCastOffCompiler, rb_intern("module_eval"), 1, rb_str_new2("def self.vm_exec(); destroy_last_finish() end"));

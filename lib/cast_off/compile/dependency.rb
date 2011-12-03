@@ -189,6 +189,8 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
         end
         s.class_eval do
           def override_singleton_method(obj, mid, flag)
+            CastOff.dlog("singleton method added #{obj}.#{mid}")
+            CastOff.delete_original_singleton_method_iseq(self, mid)
             if initializers = Dependency.singleton_method_depend?(obj, mid)
               if Dependency.singleton_method_strongly_depend?(obj, mid)
                 raise(ExecutionError.new("Should not be override #{obj}.#{mid}"))
@@ -202,6 +204,8 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
           end
 
           def override_method(obj, mid, flag)
+            CastOff.dlog("method added #{obj}##{mid}")
+            CastOff.delete_original_instance_method_iseq(self, mid)
             if initializers = Dependency.instance_method_depend?(obj, mid)
               if Dependency.instance_method_strongly_depend?(obj, mid)
                 raise(ExecutionError.new("Should not be override #{obj}##{mid}"))
@@ -214,69 +218,82 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
             end
           end
 
-          # include のフックまで入れると読み込み時間が結構遅くなるので注意
+          begin
+            singleton_method_added = o.method(:singleton_method_added).unbind
+          rescue NameError
+            singleton_method_added = nil
+          end
+
+          begin
+            method_added = o.method(:method_added).unbind
+          rescue NameError
+            method_added = nil
+          end
+
           begin
             m_include = o.method(:include).unbind
             m_extend  = o.method(:extend).unbind
           rescue NameError
             raise(ExecutionError.new("#{o}: include or extend not defined"))
           end
-          define_method(:include) do |*mods|
-            extend_p = Dependency.extend?
-            CastOff.dlog("#{self} #{extend_p ? 'extends' : 'includes'} #{mods}")
-            bug() unless m_include && m_extend
-            m = extend_p ? m_extend : m_include
-            # include, extend の対象は self なので、self 以外が include, extend することはない。
-            m.bind(self).call(*mods)
-            return unless o == self
-            mods.each do |mod|
-              next unless mod.is_a?(Module)
-              Dependency.copy(mod, self, extend_p)
-              Dependency.hook(mod) unless mod.singleton_methods(false).include?(:override_singleton_method)
-              methods = mod.instance_methods(false) + mod.private_instance_methods(false)
-              override_callback = extend_p ? :override_singleton_method : :override_method
-              methods.each{|mid| o.__send__(override_callback, o, mid, extend_p ? :extend : :include)}
-            end
-          end
-          alias extend include
 
-          begin
-            singleton_method_added = o.method(:singleton_method_added).unbind
-          rescue NameError
-            singleton_method_added = nil
-          end
-          begin
-            method_added = o.method(:method_added).unbind
-          rescue NameError
-            method_added = nil
-          end
-          define_method(:method_added) do |mid|
-            if self == o && !Dependency.ignore_overridden?(self, mid)
-              if Dependency.singleton_method_added?
-                CastOff.dlog("singleton method added #{o}.#{mid}")
-                CastOff.delete_original_singleton_method_iseq(self, mid)
+          define_method(:method_added) do |*args|
+            ignore_overridden_p = Dependency.ignore_overridden?
+            current_mid = CastOff.current_method_id
+            case current_mid
+            when :extend, :include
+              mods = args
+              extend_p = current_mid == :extend
+              CastOff.dlog("#{self} #{extend_p ? 'extends' : 'includes'} #{mods}")
+              bug() unless m_include && m_extend
+              m = extend_p ? m_extend : m_include
+              # include, extend の対象は self なので、self 以外が include, extend することはない。
+              m.bind(self).call(*mods)
+              return unless o == self
+              mods.each do |mod|
+                next unless mod.is_a?(Module)
+                Dependency.copy(mod, self, extend_p)
+                Dependency.hook(mod) unless mod.singleton_methods(false).include?(:override_singleton_method)
+                methods = mod.instance_methods(false) + mod.private_instance_methods(false)
+                override_callback = extend_p ? :override_singleton_method : :override_method
+                methods.each{|mid| o.__send__(override_callback, o, mid, extend_p ? :extend : :include)}
+              end
+            when :singleton_method_added
+              mid = args.first
+              CastOff.bug() unless mid.instance_of?(Symbol)
+              if self == o && !ignore_overridden_p
                 override_singleton_method(o, mid, :added) 
                 singleton_method_added.bind(self).call(mid) if singleton_method_added
-              else
-                CastOff.dlog("method added #{o}##{mid}")
-                CastOff.delete_original_instance_method_iseq(self, mid)
+              elsif o == Module && singleton_method_added
+                singleton_method_added.bind(self).call(mid)
+              end
+              super(mid) rescue NoMethodError
+            when :method_added
+              mid = args.first
+              CastOff.bug() unless mid.instance_of?(Symbol)
+              if self == o && !ignore_overridden_p
                 override_method(o, mid, :added)
                 method_added.bind(self).call(mid) if method_added
+              elsif o == Module && method_added
+                method_added.bind(self).call(mid)
               end
-            elsif o == BasicObject && method_added && !Dependency.singleton_method_added?
-              method_added.bind(self).call(mid)
+              super(mid) rescue NoMethodError
+            else
+              raise(ExecutionError.new("CastOff expected include, extend, method_added or singleton_method_added but #{current_mid} was called"))
             end
-            super(mid) rescue NoMethodError
           end
+          alias extend method_added
+          alias include method_added
           alias singleton_method_added method_added
           CastOff.dlog("hook #{o}")
         end
         @@singleton_method_dependency[o] ||= []
-        @@singleton_method_dependency[o] |= [:method_added, :singleton_method_added, :include]
+        @@singleton_method_dependency[o] |= [:method_added, :singleton_method_added, :include, :extend]
         @@singleton_method_strong_dependency[o] ||= []
         @@singleton_method_strong_dependency[o] |= [:method_added]
         @@singleton_method_strong_dependency[o] |= [:singleton_method_added]
         @@singleton_method_strong_dependency[o] |= [:include]
+        @@singleton_method_strong_dependency[o] |= [:extend]
       end
 
       def hook(function_pointer_initializer)

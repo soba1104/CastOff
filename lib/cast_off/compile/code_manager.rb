@@ -27,14 +27,18 @@ module CastOff
       FileUtils.mkdir(BaseDir) unless File.exist?(BaseDir)
 
       @@program_name = File.basename($PROGRAM_NAME)
+      @@program_sign = generate_signiture(@@program_name)
       CastOff::Compiler.class_eval do
-        def program_name=(dir)
-          CastOff::Compiler::CodeManager.class_variable_set(:@@program_name, dir)
+        def program_name=(name)
+          sign = CastOff::Compiler::CodeManager.generate_signiture(name)
+          CastOff::Compiler::CodeManager.class_variable_set(:@@program_sign, sign)
+          CastOff::Compiler::CodeManager.class_variable_set(:@@program_name, name)
+          name
         end
       end
 
       def self.program_dir()
-        dir = "#{BaseDir}/#{generate_signiture(@@program_name)}"
+        dir = "#{BaseDir}/#{@@program_sign}"
         FileUtils.mkdir(dir) unless File.exist?(dir)
         dir
       end
@@ -52,6 +56,12 @@ module CastOff
         return false unless compiled.delete(entry)
         dump_auto_compiled(compiled)
         return true
+      end
+
+      def self.compiled_method_exist?(filepath, line_no)
+        return false unless filepath && line_no >= 0
+        base_sign = generate_signiture("#{filepath}_#{line_no}")
+        File.exist?("#{BaseDir}/#{@@program_sign}/#{base_sign}/loadable")
       end
 
       @@compiled_methods_fetch_str = nil
@@ -156,6 +166,7 @@ Max length of signiture is #{FILEPATH_LIMIT} in this environment.
         @annotation_path = "#{@dstdir}/#{@signiture}.ann"
         @development_mark_file = "development"
         @development_mark_path = "#{@dstdir}/#{@development_mark_file}"
+        @loadable_mark_path = "#{@dstdir}/loadable"
         @dstbin = "#{@dstdir}/#{@signiture}.#{CONFIG['DLEXT']}"
         @longpath = @base_configuration_path # FIXME
         check_length()
@@ -262,6 +273,10 @@ Failed to compile c source: status = (#{$?})
       def dump_development_mark(conf)
         bug() unless conf
         FileUtils.touch(@development_mark_path) if conf.development?
+      end
+
+      def loadable()
+        FileUtils.touch(@loadable_mark_path)
       end
 
       def save_base_configuration(conf)

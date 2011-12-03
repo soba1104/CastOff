@@ -134,7 +134,7 @@ when '2'
     CastOff.development(false)
     CastOff.use_base_configuration(true)
     # step 3
-    CastOff.load(true)
+    CastOff.load()
   }
   fin = Object.new
   ObjectSpace.define_finalizer(fin){

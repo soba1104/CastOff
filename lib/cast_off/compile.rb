@@ -48,8 +48,7 @@ module CastOff
       true
     end
 
-    def load(force = false)
-      return @@autoload_proc.call() if autoload_running? && !force
+    def load()
       compiled = CodeManager.load_autocompiled()
       return false unless compiled
       __load(compiled)
@@ -409,6 +408,7 @@ Currently, CastOff cannot compile method which source file is not exist.
       manager.compile_c_source(c_source, conf, dep)
       manager.save_annotation(annotation)
       manager.dump_development_mark(conf)
+      manager.loadable()
       conf
     end
 

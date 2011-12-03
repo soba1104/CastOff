@@ -1954,7 +1954,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
       end
 
       def recursive_call_code(recv, param, argc)
-        return funcall_code(nil, @translator.allocate_id(@method_id), recv, param, @argc) if !@translator.inline_block?
+        return nil if !@translator.inline_block?
         fname = @translator.this_function_name()
         if @translator.complex_call?
           if splatcall?
@@ -1977,7 +1977,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
             if param.size == @translator.root_iseq.args.arg_size
               return "  #{@return_value} = #{fname}(#{recv}#{param.empty? ? nil : ", #{param.join(", ")}"});"
             else
-              return funcall_code(nil, @translator.allocate_id(@method_id), recv, param, @argc) 
+              return nil
             end
           end
         end
@@ -2043,6 +2043,8 @@ You should not use #{@method_id} method in compilation target of CastOff.
 
       def not_funcall_code(klass, mid, recv, param, argc)
         bug() unless klass.is_a?(ClassWrapper)
+        code = recursive_call_code(recv, param, argc) if recursive_call_class?(klass, mid)
+        return code if code
         case klass.get_method_type(mid)
         when :cfunc
           cfunc_argc = klass.get_cfunc_argc(mid)
@@ -2062,7 +2064,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
           @dependency.add(klass, mid, false)
           return "  #{@return_value} = rb_attr_get(#{recv}, #{@translator.allocate_id(klass.get_attr_id(mid))});"
         when false
-          return recursive_call_class?(klass, mid) ? recursive_call_code(recv, param, argc) : nil
+          return nil
         end
         bug()
       end
@@ -2084,7 +2086,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
             # ユーザからの指定に基づいているので、Suggestion は吐かない
             ret << funcall_code(nil, id, recv, param, @argc)
           elsif recursive_call_var?(recv, @method_id)
-            ret << recursive_call_code(recv, param, @argc)
+            ret << recursive_call_code(recv, param, @argc) || funcall_code(nil, id, recv, param, @argc)
           else
             if @configuration.development? && @source
               @translator.add_type_suggestion([get_definition_str(recv), @method_id.to_s, @source_line, @source])
