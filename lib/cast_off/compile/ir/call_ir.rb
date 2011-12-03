@@ -2086,7 +2086,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
             # ユーザからの指定に基づいているので、Suggestion は吐かない
             ret << funcall_code(nil, id, recv, param, @argc)
           elsif recursive_call_var?(recv, @method_id)
-            ret << recursive_call_code(recv, param, @argc) || funcall_code(nil, id, recv, param, @argc)
+            ret << (recursive_call_code(recv, param, @argc) || funcall_code(nil, id, recv, param, @argc))
           else
             if @configuration.development? && @source
               @translator.add_type_suggestion([get_definition_str(recv), @method_id.to_s, @source_line, @source])
