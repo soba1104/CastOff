@@ -61,6 +61,7 @@ VALUE rb_cCastOffSingletonClass;
 VALUE rb_cCastOffClassWrapper;
 VALUE rb_cCastOffMethodWrapper;
 VALUE rb_cCastOffModuleWrapper;
+VALUE oMain, cDumpMain;
 
 static VALUE
 gen_headers(void)
@@ -238,6 +239,8 @@ cast_off_instruction_stack_usage(VALUE self, VALUE insns)
   return INT2FIX(insn_stack_increase(0, insn, opes));
 }
 
+
+static int class_wrapper_support(VALUE obj, VALUE is_wrap);
 static VALUE
 cast_off_instruction_class_information_in_ic(VALUE self, VALUE iseqval)
 {
@@ -301,8 +304,7 @@ cast_off_instruction_class_information_in_ic(VALUE self, VALUE iseqval)
 
   if (FL_TEST(klass, FL_SINGLETON)) {
     VALUE obj = rb_iv_get(klass, "__attached__");
-    VALUE __klass = rb_obj_class(obj);
-    if (__klass != rb_cClass && __klass != rb_cModule) {
+    if (rb_class_of(obj) != klass || !class_wrapper_support(obj, Qfalse)) {
       return Qnil;
     }
     return rb_funcall(rb_cCastOffClassWrapper, rb_intern("new"), 2, obj, Qfalse);
@@ -584,13 +586,16 @@ static VALUE cast_off_initialize_class_wrapper(VALUE self, VALUE obj, VALUE is_w
 
   switch(is_wrap) {
   case Qtrue:
+    if (rb_obj_class(obj) != rb_cClass) {
+      rb_bug("ClassWrapper#initialize: should not be reached(0)");
+    }
     wrap = 1;
     break;
   case Qfalse:
     wrap = 0;
     break;
   default:
-    rb_bug("ClassWrapper#initialize: should not be reached");
+    rb_bug("ClassWrapper#initialize: should not be reached(1)");
   }
 
   if (wrap) {
@@ -671,14 +676,10 @@ static VALUE cast_off_class_wrapper_singleton_p(VALUE self)
   VALUE obj = wrapper->obj;
 
   if (FL_TEST(klass, FL_SINGLETON)) {
-    VALUE __klass = rb_obj_class(obj);
-    if (__klass == rb_cClass) {
+    if (class_wrapper_support(obj, Qfalse)) {
       return Qtrue;
-    } else if (__klass == rb_cModule) {
-      return Qtrue;
-    } else {
-      rb_raise(rb_eCastOffCompileError, "CastOff can't handle singleton object without Class and Module");
     }
+    rb_raise(rb_eCastOffCompileError, "CastOff can't handle un-marshalable object");
   } else {
     return Qfalse;
   }
@@ -691,14 +692,17 @@ static VALUE cast_off_class_wrapper_to_s(VALUE self)
   VALUE obj = wrapper->obj;
 
   if (FL_TEST(klass, FL_SINGLETON)) {
-    VALUE __klass = rb_obj_class(obj);
-    if (__klass == rb_cClass) {
-      return rb_class_path(obj);
-    } else if (__klass == rb_cModule) {
-      return rb_mod_name(obj);
-    } else {
-      rb_raise(rb_eCastOffCompileError, "CastOff can't handle singleton object without Class and Module");
+    if (class_wrapper_support(obj, Qfalse)) {
+      VALUE __klass = rb_obj_class(obj);
+      if (__klass == rb_cClass) {
+        return rb_class_path(obj);
+      } else if (__klass == rb_cModule) {
+        return rb_mod_name(obj);
+      } else {
+        return rb_funcall(obj, rb_intern("to_s"), 0);
+      }
     }
+    rb_raise(rb_eCastOffCompileError, "CastOff can't handle un-marshalable object");
   } else {
     return rb_class_path(klass);
   }
@@ -713,7 +717,17 @@ static VALUE cast_off_class_wrapper_marshal_dump(VALUE self)
     rb_ary_push(ary, rb_class_path(wrapper->klass));
     rb_ary_push(ary, Qtrue);
   } else {
-    rb_ary_push(ary, wrapper->obj);
+    VALUE obj = wrapper->obj;
+
+    if (!class_wrapper_support(obj, Qfalse)) {
+      rb_bug("cast_off_class_wrapper_marshal_dump: should not be reached");
+    }
+
+    if (obj == oMain) {
+      rb_ary_push(ary, cDumpMain);
+    } else {
+      rb_ary_push(ary, obj);
+    }
     rb_ary_push(ary, Qfalse);
   }
 
@@ -727,6 +741,10 @@ static VALUE cast_off_class_wrapper_marshal_load(VALUE self, VALUE ary)
 
   if (is_wrap == Qtrue) {
     obj = rb_path_to_class(obj);
+  } else {
+    if (obj == cDumpMain) {
+      obj = oMain;
+    }
   }
 
   return cast_off_initialize_class_wrapper(self, obj, is_wrap);
@@ -878,6 +896,35 @@ static VALUE cast_off_class_wrapper_each_method_search_target(VALUE self, VALUE 
   }
 
   return Qtrue;
+}
+
+static int class_wrapper_support(VALUE obj, VALUE is_wrap)
+{
+  VALUE klass = rb_obj_class(obj);
+
+  if (RTEST(is_wrap)) {
+    return klass == rb_cClass;
+  }
+
+  if (klass == rb_cClass || klass == rb_cModule) {
+    return 1;
+  }
+
+  klass == rb_class_of(obj);
+  if (!FL_TEST(klass, FL_SINGLETON)) {
+    return 1;
+  }
+
+  if (obj == oMain) {
+    return 1;
+  }
+
+  return 0;
+}
+
+static VALUE cast_off_class_wrapper_s_support_p(VALUE self, VALUE obj, VALUE is_wrap)
+{
+  return class_wrapper_support(obj, is_wrap) ? Qtrue : Qfalse;
 }
 
 #define define_type_checker(klass) \
@@ -1549,6 +1596,7 @@ void Init_cast_off(void)
   rb_define_method(rb_cCastOffClassWrapper, "Array?", cast_off_class_wrapper_Array_p, 0);
   rb_define_method(rb_cCastOffClassWrapper, "Fixnum?", cast_off_class_wrapper_Fixnum_p, 0);
   rb_define_method(rb_cCastOffClassWrapper, "Float?", cast_off_class_wrapper_Float_p, 0);
+  rb_define_singleton_method(rb_cCastOffClassWrapper, "support?", cast_off_class_wrapper_s_support_p, 2);
 
   rb_define_alloc_func(rb_cCastOffModuleWrapper, cast_off_allocate_module_wrapper);
   rb_define_method(rb_cCastOffModuleWrapper, "initialize", cast_off_initialize_module_wrapper, 1);
@@ -1579,6 +1627,10 @@ void Init_cast_off(void)
 
   rb_define_singleton_method(rb_mCastOffCompiler, "destroy_last_finish", cast_off_destroy_last_finish, 0);
   rb_funcall(rb_mCastOffCompiler, rb_intern("module_eval"), 1, rb_str_new2("def self.vm_exec(); destroy_last_finish() end"));
+
+  oMain = rb_funcall(rb_mKernel, rb_intern("eval"), 2, rb_str_new2("self"), rb_const_get(rb_cObject, rb_intern("TOPLEVEL_BINDING")));
+  rb_define_const(rb_mCastOffCompiler, "MAIN", oMain);
+  cDumpMain = rb_define_class_under(rb_cCastOffClassWrapper, "DumpMain", rb_cObject);
 
   init_insn_table();
 }

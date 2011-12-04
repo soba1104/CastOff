@@ -304,7 +304,7 @@ o = Object
         # annotation of variables
         a0 = v
         a0 = a0.map{|(c, singleton_p)|
-          bug(c) unless c.is_a?(Class) || (c.is_a?(Module) && singleton_p)
+          bug(c) unless ClassWrapper.support?(c, !singleton_p)
           bug()  unless c != SingletonClass
           if singleton_p
             wrapper = ClassWrapper.new(c, false)
@@ -342,7 +342,7 @@ o = Object
         bug() unless sym == :singleton_methods || sym == :instance_methods
         bug() unless mtbl.is_a?(Hash)
         mtbl.each do |(k, v)|
-          bug() unless k.instance_of?(Class) || (k.instance_of?(Module) && sym == :singleton_methods)
+          bug() unless ClassWrapper.support?(k, sym == :instance_methods)
           bug() unless v.instance_of?(Hash)
           if k == SingletonClass
             bug() if sym == :singleton_methods
@@ -378,7 +378,7 @@ o = Object
             end
             next if @ignore_configuration_of_return_values[k] && @ignore_configuration_of_return_values[k].include?(mid)
             klasses0 = klasses0.map{|(c, singleton_p)|
-              bug(c) unless c.is_a?(Class) || (c.is_a?(Module) && singleton_p)
+              bug(c) unless ClassWrapper.support?(c, !singleton_p)
               bug()  unless c != SingletonClass
               if singleton_p
                 wrapper = ClassWrapper.new(c, false)
@@ -473,22 +473,12 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
       ary = []
       @variable_configuration.each do |(k, v)|
         bug() unless k.instance_of?(Symbol)
-        ary << "#{k.inspect} => #{v.inspect}"
+        ary << "#{k.inspect} => #{inspect_class_wrappers(v)}"
       end
       @return_value_configuration.each do |(k, v)|
-        bug() unless k.instance_of?(ClassWrapper)
-        ary << "#{k.inspect} => #{inspect_method_return_value(v)}"
+        ary << "#{inspect_class_wrapper(k)} => #{inspect_method_return_value(v)}"
       end
       "{#{ary.join(",\n ")}}"
-    end
-
-    def inspect_method_return_value(h)
-      bug() unless h.instance_of?(Hash)
-      '{' + h.map{|(mid, classes)|
-        bug() unless mid.instance_of?(Symbol)
-        bug() unless classes.instance_of?(Array)
-        "#{mid.inspect} => #{classes.inspect}"
-      }.join(', ') + '}'
     end
 
     DIRECT_CALL_TARGETS = [
@@ -2451,6 +2441,24 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
     end
 
     private
+
+    def inspect_class_wrapper(k)
+      bug() unless k.instance_of?(ClassWrapper)
+      k.singleton? ? "SingletonClassOf<#{k.to_s}>" : k.to_s
+    end
+
+    def inspect_class_wrappers(a)
+      bug() unless a.instance_of?(Array)
+      a.map{|k| inspect_class_wrapper(k)}.inspect
+    end
+
+    def inspect_method_return_value(h)
+      bug() unless h.instance_of?(Hash)
+      '{' + h.map{|(mid, classes)|
+        bug() unless mid.instance_of?(Symbol)
+        "#{mid.inspect} => #{inspect_class_wrappers(classes)}"
+      }.join(', ') + '}'
+    end
 
     def __ignore_configuration_of_variables(sign)
       deletes = []

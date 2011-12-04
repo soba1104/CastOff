@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name		      = "cast_off"
-  spec.version		      = "0.3.6"
+  spec.version		      = "0.3.7"
   spec.platform		      = Gem::Platform::RUBY
   spec.summary		      = "Compiler for Ruby1.9.3"
   spec.description	      = <<-EOS

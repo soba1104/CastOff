@@ -77,7 +77,7 @@ module CastOff
       end
 
       def self.singleton_method_depend?(obj, mid)
-        bug() unless obj.instance_of?(Class) || obj.instance_of?(Module)
+        bug() unless ClassWrapper.support?(obj, false)
         dep = @@singleton_method_dependency[obj]
         return false unless dep
         return false unless dep.include?(mid)
@@ -92,7 +92,7 @@ module CastOff
       end
 
       def self.singleton_method_strongly_depend?(obj, mid)
-        bug() unless obj.instance_of?(Class) || obj.instance_of?(Module)
+        bug() unless ClassWrapper.support?(obj, false)
         dep = @@singleton_method_strong_dependency[obj]
         dep.instance_of?(Array) ? dep.include?(mid) : false
       end
@@ -192,7 +192,7 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
             CastOff.dlog("singleton method added #{obj}.#{mid}")
             CastOff.delete_original_singleton_method_iseq(self, mid)
             if initializers = Dependency.singleton_method_depend?(obj, mid)
-              if Dependency.singleton_method_strongly_depend?(obj, mid)
+              if Dependency.singleton_method_strongly_depend?(obj, mid) && !CastOff.method_replacing?
                 raise(ExecutionError.new("Should not be override #{obj}.#{mid}"))
               end
               # TODO Array.each の上書きチェック
@@ -207,7 +207,7 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
             CastOff.dlog("method added #{obj}##{mid}")
             CastOff.delete_original_instance_method_iseq(self, mid)
             if initializers = Dependency.instance_method_depend?(obj, mid)
-              if Dependency.instance_method_strongly_depend?(obj, mid)
+              if Dependency.instance_method_strongly_depend?(obj, mid) && !CastOff.method_replacing?
                 raise(ExecutionError.new("Should not be override #{obj}##{mid}"))
               end
               # TODO Array.each の上書きチェック
@@ -290,10 +290,7 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
         @@singleton_method_dependency[o] ||= []
         @@singleton_method_dependency[o] |= [:method_added, :singleton_method_added, :include, :extend]
         @@singleton_method_strong_dependency[o] ||= []
-        @@singleton_method_strong_dependency[o] |= [:method_added]
-        @@singleton_method_strong_dependency[o] |= [:singleton_method_added]
-        @@singleton_method_strong_dependency[o] |= [:include]
-        @@singleton_method_strong_dependency[o] |= [:extend]
+        @@singleton_method_strong_dependency[o] |= [:method_added, :singleton_method_added, :include, :extend]
       end
 
       def hook(function_pointer_initializer)
@@ -303,7 +300,7 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
             m.each{|mid| self.class.singleton_method_depend(klass, mid, function_pointer_initializer)}
             m.each{|mid| self.class.singleton_method_strongly_depend(klass, mid) if @strong_dependency.include?([klass, mid])}
             o = klass.contain_object
-            bug() unless o.instance_of?(Class) || o.instance_of?(Module)
+            bug() unless ClassWrapper.support?(o, false)
           else
             m.each{|mid| self.class.instance_method_depend(klass, mid, function_pointer_initializer)}
             m.each{|mid| self.class.instance_method_strongly_depend(klass, mid) if @strong_dependency.include?([klass, mid])}

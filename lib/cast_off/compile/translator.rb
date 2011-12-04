@@ -46,6 +46,7 @@ static VALUE rb_cCastOffSingletonClass;
 static VALUE rb_cCastOffConfiguration;
 static VALUE rb_cCastOffClassWrapper;
 static VALUE rb_cCastOffMethodWrapper;
+static VALUE oMain, cMain;
 
 #include "vm_api.h"
 #include "iter_api.h"
@@ -97,7 +98,7 @@ static void sampling_variable(VALUE val, VALUE sym)
   hash = RHASH_TBL(hashval);
 
   if (FL_TEST(klass, FL_SINGLETON)) {
-    if (rb_obj_class(val) == rb_cClass || rb_obj_class(val) == rb_cModule) {
+    if (rb_obj_class(val) == rb_cClass || rb_obj_class(val) == rb_cModule || val == oMain) {
       klass = val;
       singleton_class_or_module_obj_p = Qtrue;
     } else {
@@ -127,7 +128,7 @@ static void __sampling_poscall(VALUE val, VALUE method_klass, VALUE method_id)
   if (FL_TEST(method_klass, FL_SINGLETON)) {
     VALUE recv = rb_ivar_get(method_klass, rb_intern("__attached__"));
     if (rb_class_of(recv) == method_klass) {
-      if ((rb_obj_class(recv) == rb_cClass || rb_obj_class(recv) == rb_cModule)) {
+      if ((rb_obj_class(recv) == rb_cClass || rb_obj_class(recv) == rb_cModule) || recv == oMain) {
         method_klass = recv;
         class_method_or_module_function_p = Qtrue;
       } else {
@@ -190,7 +191,7 @@ static void sampling_poscall(VALUE val, VALUE recv, VALUE method_id)
 %end
 
 %@fptr.each do |(k, fps)|
-%  kids, mid, singleton, convention, argc = k
+%  name, mid, singleton, convention, argc = k
 %  mid = allocate_id(mid)
 %  fps.each do |fp|
 
@@ -324,12 +325,19 @@ static VALUE cast_off_initialize_fptr_<%= signiture() %>(VALUE dummy)
   feval = me->def->body.cfunc.func;
 
 %@fptr.each do |(k, v)|
-%  kids, mid, singleton, convention, argc = k
+%  name, mid, singleton, convention, argc = k
 %  mid = allocate_id(mid)
 %  fps = v
+%  case name
+%  when Symbol
+  klass = <%= name %>;
+%  when Array
   klass = rb_cObject;
-%  kids.each do |kid|
+%    name.each do |kid|
   klass = rb_const_get(klass, rb_intern("<%= kid %>"));
+%    end
+%  else
+%    bug()
 %  end
 %  if singleton
   should_be_singleton(klass);
@@ -734,6 +742,8 @@ void Init_<%= signiture() %>(void)
   rb_cCastOffConfiguration = rb_const_get(rb_mCastOffCompiler, rb_intern("Configuration"));
   rb_cCastOffClassWrapper = rb_const_get(rb_mCastOffCompiler, rb_intern("ClassWrapper"));
   rb_cCastOffMethodWrapper = rb_const_get(rb_mCastOffCompiler, rb_intern("MethodWrapper"));
+  oMain = rb_const_get(rb_mCastOffCompiler, rb_intern("MAIN"));
+  cMain = rb_class_of(oMain);
 
 %if !@mid
   rb_define_method(rb_mCastOffCompiler, "<%= signiture() %>", <%= this_function_name() %>, 1);
@@ -898,9 +908,14 @@ Source line is #{@root_iseq.source_line}.
       suffix = klass.singleton? ? 'singleton' : 'instance'
       fptr = "fptr_#{klass}_#{@namespace.new(mid).name}_#{suffix}"
       fptr.gsub!(/:/, '_')
-      ids = klass.to_s.split("::")
-      ids.each{|k| bug() if k == ''}
-      key = [ids, mid, klass.singleton?, convention, argc]
+      name = C_CLASS_MAP[klass]
+      unless name
+        path = klass.to_s
+        bug() if path == "::main"
+        name = path.split("::")
+        name.each{|k| bug() if k == ''}
+      end
+      key = [name, mid, klass.singleton?, convention, argc]
       entry = @fptr[key] || []
       fptr.concat("_#{argc}_#{entry.size}")
       entry << fptr
@@ -961,6 +976,7 @@ Source line is #{@root_iseq.source_line}.
     end
 
     def prefetch_constant(var, path, singleton_p)
+      bug() if path == "::main"
       if @prefetch_constants[var]
         bug() unless @prefetch_constants[var] == [path, singleton_p]
       else
@@ -1008,6 +1024,7 @@ Source line is #{@root_iseq.source_line}.
       ClassWrapper.new(Enumerator, true)     => :rb_cEnumerator,
       ClassWrapper.new(Fiber, true)          => :rb_cFiber,
       ClassWrapper.new(Data, true)           => :rb_cData,
+      ClassWrapper.new(MAIN, false)          => :cMain,
       #ClassWrapper.new(Generator, true)     => :rb_cGenerator,
       #ClassWrapper.new(Continuation, true)  => :rb_cContinuation,
       #ClassWrapper.new(ISeq, true)          => :rb_cISeq,

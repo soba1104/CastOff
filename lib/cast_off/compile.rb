@@ -173,7 +173,7 @@ module CastOff
         load_binary(manager, configuration, suggestion, iseq)
         t = override_target(target, mid)
         dlog("override target of #{target}##{mid} is #{t}")
-        __send__("register_method_#{manager.signiture}", t)
+        replace_method(t, manager, false)
         @@original_instance_method_iseq[[t, mid]] = iseq
         @@manager_table[manager.signiture] = manager
       end
@@ -193,7 +193,7 @@ module CastOff
         manager.compilation_target_is_a(obj, mid, true)
         set_direct_call(obj, mid, :singleton, manager, configuration)
         load_binary(manager, configuration, suggestion, iseq)
-        __send__("register_singleton_method_#{manager.signiture}", obj)
+        replace_method(obj, manager, true)
         @@original_singleton_method_iseq[[obj, mid]] = iseq
         @@manager_table[manager.signiture] = manager
       end
@@ -230,11 +230,20 @@ module CastOff
       !!Thread.current[COMPILER_RUNNING_KEY]
     end
 
+    def method_replacing?
+      !!Thread.current[METHOD_REPLACING_KEY]
+    end
+
     private
 
     COMPILER_RUNNING_KEY = :CastOffCompilerRunning
     def compiler_running(bool)
       Thread.current[COMPILER_RUNNING_KEY] = bool
+    end
+
+    METHOD_REPLACING_KEY = :CastOffMethodReplacing
+    def method_replacing(bool)
+      Thread.current[METHOD_REPLACING_KEY] = bool
     end
 
     Lock = Mutex.new()
@@ -483,11 +492,11 @@ Currently, CastOff cannot compile method which source file is not exist.
         end
       end
     end
-    Module.class_eval do
-      define_method(:autoload) do |*args|
-        raise(ExecutionError.new("Currently, CastOff doesn't support Module#autoload"))
-      end
-    end
+    #Module.class_eval do
+      #define_method(:autoload) do |*args|
+        #raise(ExecutionError.new("Currently, CastOff doesn't support Module#autoload"))
+      #end
+    #end
     Kernel.module_eval do
       def set_trace_func(*args, &p)
         raise(ExecutionError.new("Currently, CastOff doesn't support set_trace_func"))
@@ -648,7 +657,7 @@ Currently, CastOff cannot compile method which source file is not exist.
           bug() unless mtbl.is_a?(Hash)
           bug() unless val0.is_a?(Hash)
           val0.each do |(klass, midtbl)|
-            bug() unless klass.is_a?(Class) || (klass.is_a?(Module) && sym == :singleton_methods)
+            bug() unless ClassWrapper.support?(klass, sym == :instance_methods)
             bug() unless midtbl.is_a?(Hash)
             newval = {}
             midtbl.each do |(key1, val1)|
@@ -707,14 +716,8 @@ Currently, CastOff cannot compile method which source file is not exist.
               val0.each do |(klass, singleton_p)|
                 kstr = klass.to_s
                 if singleton_p
-                  case klass # 変数名が klass だとわかりにくいので、変更すること
-                  when Class
-                    kstr = "Class<#{kstr}>"
-                  when Module
-                    kstr = "Module<#{kstr}>"
-                  else
-                    bug()
-                  end
+                  bug() unless ClassWrapper.support?(klass, false)
+                  kstr = "SingletonClassOf<#{kstr}>"
                 end
                 ary << [key0.to_s, kstr]
               end
@@ -728,20 +731,14 @@ Currently, CastOff cannot compile method which source file is not exist.
               bug() unless sym == :singleton_methods || sym == :instance_methods
               bug() unless mtbl.is_a?(Hash)
               mtbl.each do |key0, val0|
-                bug() unless key0.is_a?(Class) || (key0.is_a?(Module) && sym == :singleton_methods)
+                bug() unless ClassWrapper.support?(key0, sym == :instance_methods)
                 bug() unless val0.is_a?(Hash)
                 val0.each do |(mid, classes)|
                   classes.each do |(klass, singleton_p)|
                     kstr = klass.to_s
                     if singleton_p
-                      case klass # 変数名が klass だとわかりにくいので、変更すること
-                      when Class
-                        kstr = "Class<#{kstr}>"
-                      when Module
-                        kstr = "Module<#{kstr}>"
-                      else
-                        bug()
-                      end
+                      bug() unless ClassWrapper.support?(klass, false)
+                      kstr = "SingletonClassOf<#{kstr}>"
                     end
                     ary << ["#{key0}#{sym == :singleton_methods ? '.' : '#'}#{mid}", kstr]
                   end
@@ -768,6 +765,16 @@ Currently, CastOff cannot compile method which source file is not exist.
             suggestion.add_suggestion("CastOff suggests you to use following type information", ["CastOff Suggestion"], [[s2]], false)
           end
         end
+      end
+    end
+
+    def replace_method(target, manager, singleton_p)
+      begin
+        method_replacing(true)
+        mid = "register#{singleton_p ? '_singleton_' : '_'}method_#{manager.signiture}"
+        __send__(mid, target)
+      ensure
+        method_replacing(false)
       end
     end
 

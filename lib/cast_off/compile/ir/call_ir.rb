@@ -1854,13 +1854,17 @@ You should not use #{@method_id} method in compilation target of CastOff.
             bug() if !can_unbox_result && @return_value.unboxed?
             suffix << (@return_value.unboxed? ? unboxed_decl(@return_value) : 'VALUE')
             suffix = suffix.join('_')
+            @dependency.add(klass, @method_id, true)
             return "  #{@return_value} = cast_off_inline_#{klass.to_s.downcase}_#{name}_#{suffix}(#{recv}#{s_param});"
           else
+            @dependency.add(klass, @method_id, true)
             return "  #{@return_value} = cast_off_inline_#{klass.to_s.downcase}_#{name}(#{recv}#{s_param});"
           end
         else
           m = SpecializeTable1[[mid, argc, MethodWrapper.new(klass, mid)]]
-          return m ? __send__(m, klass, mid, argc, recv, param) : false
+          return false unless m
+          @dependency.add(klass, @method_id, true)
+          return __send__(m, klass, mid, argc, recv, param)
         end
         bug()
       end
@@ -1923,34 +1927,23 @@ You should not use #{@method_id} method in compilation target of CastOff.
         bug()
       end
 
-      def recursive_call_class?(klass, mid)
+      def recursive_call?(klass)
         same_class = false
         bug() unless klass.is_a?(ClassWrapper)
         if @translator.reciever_class && @translator.reciever_class.include?(klass)
           same_class = true
         end
-        if same_class && mid == @translator.mid
+        if same_class && @method_id == @translator.mid
           true
         else
           false
         end
       end
 
-      def recursive_call_var?(recv, mid)
-        same_class = false
-        if @translator.reciever_class && @translator.reciever_class.size() == 1
-          same_class = true if recv.is_just?(@translator.reciever_class[0])
-        end
-        recv_defn = param_irs.first.get_definition(recv)
-        if recv_defn.size == 1 && (@translator.inline_block? || @insn.iseq.root?)
-          recv_defn = recv_defn.first
-          same_class |= recv_defn.is_a?(SubIR) && recv_defn.src.is_a?(Self)
-        end
-        if same_class && mid == @translator.mid
-          true
-        else
-          false
-        end
+      def recursive_call_depend(recv)
+        bug() if recv.dynamic?
+        classes = recv.types
+        classes.each{|klass| @dependency.add(klass, @method_id, true)}
       end
 
       def recursive_call_code(recv, param, argc)
@@ -1959,6 +1952,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
         if @translator.complex_call?
           if splatcall?
             call_code = "#{@return_value} = #{fname}(argc, argv, #{recv});"
+            recursive_call_depend(recv)
             return SPLATCALL_TEMPLATE_ARGV.trigger(binding)
           else
             ret = ""
@@ -1966,15 +1960,18 @@ You should not use #{@method_id} method in compilation target of CastOff.
             param.each_with_index do |arg, i|
               ret += "  #{c_ary}[#{i}] = #{arg};\n"
             end
+            recursive_call_depend(recv)
             return ret + "  #{@return_value} = #{fname}(#{argc - 1}, #{c_ary}, #{recv});"
           end
         else
           if splatcall?
             splat_call_argc = @translator.root_iseq.args.arg_size
             fnam_code = fname
+            recursive_call_depend(recv)
             return SPLATCALL_TEMPLATE_CFUNC.trigger(binding)
           else
             if param.size == @translator.root_iseq.args.arg_size
+              recursive_call_depend(recv)
               return "  #{@return_value} = #{fname}(#{recv}#{param.empty? ? nil : ", #{param.join(", ")}"});"
             else
               return nil
@@ -2043,7 +2040,7 @@ You should not use #{@method_id} method in compilation target of CastOff.
 
       def not_funcall_code(klass, mid, recv, param, argc)
         bug() unless klass.is_a?(ClassWrapper)
-        code = recursive_call_code(recv, param, argc) if recursive_call_class?(klass, mid)
+        code = recursive_call_code(recv, param, argc) if recursive_call?(klass)
         return code if code
         case klass.get_method_type(mid)
         when :cfunc
@@ -2085,8 +2082,6 @@ You should not use #{@method_id} method in compilation target of CastOff.
           if @configuration.force_dispatch_method?
             # ユーザからの指定に基づいているので、Suggestion は吐かない
             ret << funcall_code(nil, id, recv, param, @argc)
-          elsif recursive_call_var?(recv, @method_id)
-            ret << (recursive_call_code(recv, param, @argc) || funcall_code(nil, id, recv, param, @argc))
           else
             if @configuration.development? && @source
               @translator.add_type_suggestion([get_definition_str(recv), @method_id.to_s, @source_line, @source])
