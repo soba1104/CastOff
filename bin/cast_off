@@ -36,13 +36,11 @@ opt.on('--clear', <<-EOS.strip) {|v| clear = true }
                                      you should execute following command.
                                      $cast_off --clear --name=foo
 EOS
-opt.on('--step-1') {|v| step = '1' }
-opt.on('--step-2') {|v| step = '2' }
 opt.on('--verbose', <<-EOS.strip) {|v| verbose = true }
                                      Show compilation progress and internal information.
 EOS
 opt.on_tail('-h', "--help", "Show this help.") do
-  message = opt.to_s.gsub(/\n[ ]*--step-[0-9]+[ ]*/, '')
+  message = opt.to_s
   message.concat(<<-EOS)
 
   Example:
@@ -113,44 +111,18 @@ CastOff.verbose(verbose)
 case step
 when nil
   STDERR.puts("-------------------------------- compilation start: threshold = #{threshold}, name = #{name}, profiling = ruby #{args} --------------------------------")
-  2.times do |i|
-    system("#{this} --step-#{i + 1} --threshold=#{threshold} --name=#{name} #{verbose ? '--verbose' : ''} #{args}")
-    unless $? == 0
-      STDERR.puts("Failed to execute 'ruby #{args}'")
-      exit
-    end
-  end
-when '1'
-  STDERR.puts("-------------------------------- step 1 --------------------------------") if verbose
   CastOff.development(true)
   CastOff.use_base_configuration(false)
   CastOff.autocompile()
-when '2'
-  STDERR.puts("-------------------------------- step 2 --------------------------------") if verbose
-  CastOff.development(true)
-  CastOff.use_base_configuration(false)
-  CastOff.autoload()
   at_exit{
-    CastOff.development(false)
-    CastOff.use_base_configuration(true)
-    # step 3
-    CastOff.load()
+    at_exit{
+      CastOff.development(false)
+      CastOff.use_base_configuration(true)
+      CastOff.re_compile_all()
+    }
   }
   fin = Object.new
   ObjectSpace.define_finalizer(fin){
-=begin
-    msg = <<-EOS
-
-----------------------------------------------------------------------------------------
-Compilation finished successfully.
-Please add following lines to top of #{script}.
-
-require 'cast_off'
-#{configuration.chomp}
-CastOff.autoload()
-----------------------------------------------------------------------------------------
-    EOS
-=end
     msg = <<-EOS
 ----------------------------------------------------------------------------------------
 Compilation finished successfully.
@@ -168,5 +140,5 @@ else
 end
 
 $0 = script
-load script if step
+load script
 

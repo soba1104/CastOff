@@ -698,8 +698,10 @@ static VALUE cast_off_class_wrapper_to_s(VALUE self)
         return rb_class_path(obj);
       } else if (__klass == rb_cModule) {
         return rb_mod_name(obj);
-      } else {
+      } else if (obj == oMain) {
         return rb_funcall(obj, rb_intern("to_s"), 0);
+      } else if (RCLASS_M_TBL(klass)->num_entries == 0) {
+        return rb_class_path(__klass);
       }
     }
     rb_raise(rb_eCastOffCompileError, "CastOff can't handle un-marshalable object");
@@ -1245,112 +1247,11 @@ static VALUE cast_off_should_not_be_reached(VALUE self)
   rb_bug("should not be reached");
 }
 
-static void cast_off_class_definition_end_handler(rb_event_flag_t event, VALUE proc, VALUE self, ID id, VALUE klass)
-{
-  /* self = target class */
-  /* id = klass = 0 */
-
-  static VALUE args = Qnil;
-
-  if (args == Qnil) {
-    args = rb_ary_new();
-    rb_gc_register_mark_object(args);
-  }
-
-  rb_proc_call(proc, args);
-}
-
-static VALUE cast_off_hook_class_definition_end(VALUE self, VALUE proc)
-{
-  static int hook = 0;
-
-  if (proc == Qnil) {
-    if (!hook) {
-      return Qfalse;
-    }
-    hook = 0;
-    rb_remove_event_hook(&cast_off_class_definition_end_handler);
-    return Qtrue;
-  }
-
-  if (hook) {
-    return Qfalse;
-  }
-
-  if (rb_class_of(proc) != rb_cProc) {
-    rb_bug("cast_off_hook_class_definition_end: should not be reached(0)");
-  }
-
-  rb_add_event_hook(&cast_off_class_definition_end_handler, RUBY_EVENT_END, proc);
-  hook = 1;
-
-  return Qtrue;
-}
-
-#define IN_HEAP_P(th, ptr)  \
-  (!((th)->stack < (ptr) && (ptr) < ((th)->stack + (th)->stack_size)))
-
-static VALUE caller_info(rb_thread_t *th)
-{
-  rb_control_frame_t *cfp;
-  VALUE *lfp = NULL;
-  VALUE recv, name;
-  VALUE klass;
-  ID mid;
-  rb_method_entry_t *me;
-
-  cfp = th->cfp; /* this method frame */
-  cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
-  while (1) {
-    if ((VALUE *) cfp >= th->stack + th->stack_size) {
-      if (lfp && IN_HEAP_P(th, lfp)) {
-        return Qnil;
-      }
-      rb_bug("caller_info: should not be reached (0) %p", cfp->lfp);
-    }
-    if (lfp && cfp->dfp != lfp) {
-      cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
-      continue;
-    }
-    lfp = NULL;
-    switch(VM_FRAME_TYPE(cfp)) {
-    case VM_FRAME_MAGIC_METHOD:
-      recv = cfp->self;
-      name = cfp->iseq->name;
-      klass = rb_class_of(recv);
-      mid = rb_intern(RSTRING_PTR(name));
-      me = search_method(klass, mid);
-      if (!me) {
-        rb_bug("caller_info: should not be reached (1)");
-      }
-      klass = me->klass;
-      return rb_ary_new3(2, klass, ID2SYM(mid));
-    case VM_FRAME_MAGIC_BLOCK:
-    case VM_FRAME_MAGIC_PROC:
-    case VM_FRAME_MAGIC_LAMBDA:
-      lfp = cfp->lfp;
-      cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
-      continue;
-    case VM_FRAME_MAGIC_FINISH:
-      cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
-      continue;
-    case VM_FRAME_MAGIC_CLASS:
-    case VM_FRAME_MAGIC_TOP:
-    case VM_FRAME_MAGIC_CFUNC:
-    case VM_FRAME_MAGIC_IFUNC:
-    case VM_FRAME_MAGIC_EVAL:
-      return Qnil;
-    default:
-      rb_bug("caller_info: should not be reached (2)");
-    }
-  }
-}
-
 static void cast_off_method_invocation_handler(rb_event_flag_t event, VALUE proc, VALUE self, ID id, VALUE klass)
 {
   const char *srcfile;
-  VALUE filename, need_binding;
-  VALUE argv[6];
+  VALUE need_binding;
+  VALUE argv[3];
   int line;
 
   if (klass == 0) {
@@ -1372,23 +1273,18 @@ static void cast_off_method_invocation_handler(rb_event_flag_t event, VALUE proc
 
   srcfile = rb_sourcefile();
   if (!srcfile) return;
-  filename = rb_str_new2(srcfile);
 
   line = rb_sourceline();
   if (line < 0) return;
 
-  argv[0] = filename;
-  argv[1] = INT2FIX(line);
-  argv[2] = ID2SYM(id);
-  argv[3] = Qnil;
-  argv[4] = klass;
-  /* argv[5] = caller_info(th); */
+  argv[0] = klass;
+  argv[1] = ID2SYM(id);
+  argv[2] = Qnil;
 
-  /* rb_proc_call_with_block(proc, 6, argv, Qnil); */
-  need_binding = rb_proc_call_with_block(proc, 5, argv, Qnil);
+  need_binding = rb_proc_call_with_block(proc, 3, argv, Qnil);
   if (RTEST(need_binding)) {
-    argv[3] = (self && srcfile) ? rb_binding_new() : Qnil;
-    need_binding = rb_proc_call_with_block(proc, 5, argv, Qnil);
+    argv[2] = (self && srcfile) ? rb_binding_new() : Qnil;
+    need_binding = rb_proc_call_with_block(proc, 3, argv, Qnil);
   }
   if (RTEST(need_binding)) {
     rb_bug("cast_off_method_invocation_handler: should not be reached");
@@ -1509,6 +1405,175 @@ VALUE cast_off_same_method_p(VALUE dummy, VALUE obj, VALUE mid)
   }
 }
 
+static VALUE cast_off_override_target_of_current_method(VALUE dummy, VALUE obj)
+{
+  VALUE klass = rb_class_of(obj);
+  VALUE thval = rb_thread_current();
+  rb_thread_t *th = DATA_PTR(thval);
+  rb_control_frame_t *cfp;
+  const rb_method_entry_t *me0, *me1;
+  ID mid;
+
+  cfp = th->cfp; /* this method frame */
+  cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp); /* target frame */
+  if (!cfp->me) {
+    rb_bug("cast_off_target_of_current_method: should not be reached(0)");
+  }
+  if (cfp->me->def->type != VM_METHOD_TYPE_BMETHOD) {
+    rb_bug("cast_off_target_of_current_method: should not be reached(1)");
+  }
+  me0 = cfp->me;
+
+  mid = cfp->me->called_id;
+  if (!mid) {
+    rb_bug("cast_off_target_of_current_method: should not be reached(2)");
+  }
+
+  while(1) {
+    if (!klass) return Qnil;
+    me1 = search_method(klass, mid);
+    if (!me1) return Qnil; /* maybe method object */
+    if (rb_method_definition_eq(me0->def, me1->def)) {
+      VALUE target = me1->klass;
+      if (rb_obj_class(target) != rb_cClass && rb_obj_class(target) != rb_cModule) {
+        rb_bug("cast_off_target_of_current_method: should not be reached(3)");
+      }
+      return target;
+    }
+    klass = RCLASS_SUPER(klass);
+  }
+
+  rb_bug("cast_off_target_of_current_method: should not be reached(4)");
+}
+
+static VALUE cast_off_singleton_class_p(VALUE dummy, VALUE klass)
+{
+  if (rb_obj_class(klass) != rb_cClass && rb_obj_class(klass) != rb_cModule) {
+    rb_bug("cast_off_singleton_class_p: should not be reached");
+  }
+  return FL_TEST(klass, FL_SINGLETON) ? Qtrue : Qfalse;
+}
+
+static VALUE cast_off_current_bmethod_proc(VALUE dummy)
+{
+  VALUE thval = rb_thread_current();
+  rb_thread_t *th = DATA_PTR(thval);
+  rb_control_frame_t *cfp;
+
+  cfp = th->cfp; /* this method frame */
+  cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp); /* target frame */
+  if (!cfp->me) {
+    rb_bug("cast_off_create_current_bmethod_proc: should not be reached(0)");
+  }
+  if (cfp->me->def->type != VM_METHOD_TYPE_BMETHOD) {
+    rb_bug("cast_off_create_current_bmethod_proc: should not be reached(1)");
+  }
+  if (rb_obj_class(cfp->me->def->body.proc) != rb_cProc) {
+    rb_bug("cast_off_create_current_bmethod_proc: should not be reached(2)");
+  }
+  return cfp->me->def->body.proc;
+}
+
+/* copy of ruby source */
+struct METHOD {
+  VALUE recv;
+  VALUE rclass;
+  ID id;
+%if RUBY_VERSION == "1.9.3"
+  rb_method_entry_t *me;
+  struct unlinked_method_entry_list_entry *ume;
+%else
+  rb_method_entry_t me;
+%end
+};
+
+static VALUE cast_off_instance_bmethod_proc(VALUE dummy, VALUE bmethod)
+{
+  struct METHOD *method = DATA_PTR(bmethod);
+%if RUBY_VERSION == "1.9.3"
+  rb_method_entry_t *me = method->me;
+%else
+  rb_method_entry_t *me = &method->me;
+%end
+
+  if (me->def->type != VM_METHOD_TYPE_BMETHOD) {
+    rb_bug("cast_off_instance_bmethod_proc: should not be reached(0)");
+  }
+  if (rb_obj_class(me->def->body.proc) != rb_cProc) {
+    rb_bug("cast_off_instance_bmethod_proc: should not be reached(1)");
+  }
+  return me->def->body.proc;
+}
+
+static VALUE cast_off_rewrite_method_object(VALUE dummy, VALUE dst, VALUE src, VALUE proc)
+{
+  rb_method_entry_t *dst_me, *src_me;
+  struct METHOD *dst_mptr, *src_mptr;
+
+  if (rb_obj_class(dst) != rb_cMethod ||
+      rb_obj_class(src) != rb_cUnboundMethod ||
+      rb_obj_class(proc) != rb_cProc) {
+    rb_bug("cast_off_rewrite_method_object: should not be reached(0)");
+  }
+
+  dst_mptr = DATA_PTR(dst);
+%if RUBY_VERSION == "1.9.3"
+  dst_me = dst_mptr->me;
+%else
+  dst_me = &dst_mptr->me;
+%end
+  if (dst_me->def->type != VM_METHOD_TYPE_BMETHOD) {
+    return Qfalse;
+  }
+  if (dst_me->def->body.proc != proc) {
+    return Qfalse;
+  }
+
+  src_mptr = DATA_PTR(src);
+%if RUBY_VERSION == "1.9.3"
+  src_me = src_mptr->me;
+%else
+  src_me = &src_mptr->me;
+%end
+
+%if RUBY_VERSION == "1.9.3"
+  {
+    /* copy of bm_free: proc.c */
+    VALUE thval = rb_thread_current();
+    rb_thread_t *th = DATA_PTR(thval);
+    rb_vm_t *vm = th->vm;
+    struct unlinked_method_entry_list_entry *ume = dst_mptr->ume;
+
+    ume->me = dst_me;
+    ume->next = vm->unlinked_method_entry_list;
+    vm->unlinked_method_entry_list = ume;
+    dst_mptr->ume = ALLOC(struct unlinked_method_entry_list_entry);
+  }
+
+  /* copy of mnew: proc.c */
+  dst_mptr->me = ALLOC(rb_method_entry_t);
+  dst_me = dst_mptr->me;
+%end
+  *dst_me = *src_me;
+  dst_me->def->alias_count++;
+
+  return Qtrue;
+}
+
+static VALUE cast_off_rewrite_rclass_of_unbound_method_object(VALUE dummy, VALUE mobj, VALUE rclass)
+{
+  struct METHOD *mptr;
+
+  if (rb_obj_class(mobj) != rb_cUnboundMethod || rb_obj_class(rclass) != rb_cClass) {
+    rb_bug("cast_off_rewrite_rclass_of_unbound_method_object(0)");
+  }
+
+  mptr = DATA_PTR(mobj);
+  mptr->rclass = rclass;
+
+  return Qnil;
+}
+
 /* for deoptimization */
 rb_iseq_t *cast_off_Fixnum_times_iseq;
 rb_iseq_t *cast_off_Array_each_iseq;
@@ -1541,9 +1606,14 @@ void Init_cast_off(void)
   rb_define_method(rb_mCastOffCompiler, "load_compiled_file", cast_off_load_compiled_file, 1);
   rb_define_method(rb_mCastOffCompiler, "get_caller", cast_off_get_caller, 0);
   rb_define_method(rb_mCastOffCompiler, "hook_method_invocation", cast_off_hook_method_invocation, 1);
-  rb_define_method(rb_mCastOffCompiler, "hook_class_definition_end", cast_off_hook_class_definition_end, 1);
   rb_define_method(rb_mCastOffCompiler, "current_method_id", cast_off_current_method_id, 0);
   rb_define_method(rb_mCastOffCompiler, "same_method?", cast_off_same_method_p, 2);
+  rb_define_method(rb_mCastOffCompiler, "singleton_class?", cast_off_singleton_class_p, 1);
+  rb_define_method(rb_mCastOffCompiler, "override_target_of_current_method", cast_off_override_target_of_current_method, 1);
+  rb_define_method(rb_mCastOffCompiler, "current_bmethod_proc", cast_off_current_bmethod_proc, 0);
+  rb_define_method(rb_mCastOffCompiler, "instance_bmethod_proc", cast_off_instance_bmethod_proc, 1);
+  rb_define_method(rb_mCastOffCompiler, "rewrite_method_object", cast_off_rewrite_method_object, 3);
+  rb_define_method(rb_mCastOffCompiler, "rewrite_rclass_of_unbound_method_object", cast_off_rewrite_rclass_of_unbound_method_object, 2);
   rb_define_method(rb_mCastOffCompilerInstruction, "get_child_iseq", cast_off_get_child_iseq, 2);
   rb_define_const(rb_mCastOffCompilerInstruction, "ROBJECT_EMBED_LEN_MAX", LONG2FIX(ROBJECT_EMBED_LEN_MAX));
   rb_define_const(rb_mCastOffCompilerInstruction, "THROW_TAG_RETURN", LONG2FIX(TAG_RETURN));

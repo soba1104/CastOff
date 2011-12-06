@@ -11,5 +11,6 @@ module CastOff
   extend CastOff::Util
   extend CastOff::Compiler
 end
+CastOff.hook_method_definition()
 CastOff.clear_settings()
 

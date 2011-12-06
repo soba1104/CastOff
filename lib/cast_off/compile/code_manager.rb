@@ -50,59 +50,10 @@ module CastOff
         dir
       end
 
-      def self.delete_from_compiled(entry)
-        compiled = load_autocompiled()
-        return false unless compiled
-        return false unless compiled.delete(entry)
-        dump_auto_compiled(compiled)
-        return true
-      end
-
       def self.compiled_method_exist?(filepath, line_no)
         return false unless filepath && line_no >= 0
         base_sign = generate_signiture("#{filepath}_#{line_no}")
         File.exist?("#{BaseDir}/#{@@program_sign}/#{base_sign}/loadable")
-      end
-
-      @@compiled_methods_fetch_str = nil
-      @@compiled_methods_load_str  = nil
-      def self.load_autocompiled()
-        begin
-          dir = program_dir()
-          # fetch classes
-          path = "#{dir}/.compiled_methods"
-          return nil unless File.exist?(path)
-          if !@@compiled_methods_fetch_str
-            @@compiled_methods_fetch_str = File.open(path, 'rb:us-ascii').read() 
-            @@compiled_methods_fetch_str.untaint # FIXME
-          end
-          Marshal.load(@@compiled_methods_fetch_str)
-          # load compiled methods information
-          path = "#{dir}/compiled_methods"
-          return nil unless File.exist?(path)
-          if !@@compiled_methods_load_str
-            @@compiled_methods_load_str = File.open(path, 'rb:us-ascii').read() 
-            @@compiled_methods_load_str.untaint # FIXME
-          end
-          Marshal.load(@@compiled_methods_load_str)
-        rescue ArgumentError, NameError
-          false
-        end
-      end
-
-      def self.dump_auto_compiled(compiled)
-        dir = program_dir()
-        path = "#{dir}/.compiled_methods"
-        File.open("#{path}", 'wb:us-ascii') do |f|
-          Marshal.dump(compiled.map{|c| c.first}, f) # dump only classes
-        end
-        @@compiled_methods_fetch_str = nil
-        path = "#{dir}/compiled_methods"
-        File.open("#{path}", 'wb:us-ascii') do |f|
-          Marshal.dump(compiled, f)
-        end
-        @@compiled_methods_load_str = nil
-        load_autocompiled()
       end
 
       def create_dstdir()
