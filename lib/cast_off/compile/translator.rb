@@ -917,7 +917,7 @@ Source line is #{@root_iseq.source_line}.
       end
       key = [name, mid, klass.singleton?, convention, argc]
       entry = @fptr[key] || []
-      fptr.concat("_#{argc}_#{entry.size}")
+      fptr.concat("_#{convention.to_s.gsub(/-/, '_')}_#{argc}_#{entry.size}")
       entry << fptr
       @fptr[key] = entry
       fptr
@@ -1048,7 +1048,9 @@ Source line is #{@root_iseq.source_line}.
           rescue CompileError
             return nil
           end
-          return nil unless /^[\w:]+$/.match(path)
+          unless /^[\w:]+$/.match(path)
+            return nil
+          end
           if klass.singleton?
             name = allocate_name("singleton_class_#{path}")
             singleton_p = true

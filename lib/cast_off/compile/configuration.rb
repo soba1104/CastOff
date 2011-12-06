@@ -839,10 +839,10 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
       [Kernel, :fail, :singleton],
       [Kernel, :global_variables, :module],
       [Kernel, :global_variables, :singleton],
-      [Kernel, :__method__, :module],
-      [Kernel, :__method__, :singleton],
-      [Kernel, :__callee__, :module],
-      [Kernel, :__callee__, :singleton],
+      #[Kernel, :__method__, :module], #rb_frame_caller()
+      #[Kernel, :__method__, :singleton], #rb_frame_caller()
+      #[Kernel, :__callee__, :module], #rb_frame_caller()
+      #[Kernel, :__callee__, :singleton], #rb_frame_caller()
       [Module, :append_features, :class],
       [Module, :extend_object, :class],
       [Module, :include, :class],
@@ -850,10 +850,10 @@ Currently, CastOff doesn't support object, which cannot marshal dump (e.g. STDIN
       [Kernel, :eval, :singleton],
       [Kernel, :local_variables, :module],
       [Kernel, :local_variables, :singleton],
-      [Kernel, :iterator?, :module],
-      [Kernel, :iterator?, :singleton],
-      [Kernel, :block_given?, :module],
-      [Kernel, :block_given?, :singleton],
+      #[Kernel, :iterator?, :module], #rb_f_block_given_p
+      #[Kernel, :iterator?, :singleton], #rb_f_block_given_p
+      #[Kernel, :block_given?, :module], #rb_f_block_given_p
+      #[Kernel, :block_given?, :singleton], #rb_f_block_given_p
       [Kernel, :catch, :module],
       [Kernel, :catch, :singleton],
       [Kernel, :throw, :module],

@@ -22,36 +22,11 @@ module CastOff
       CodeManager.clear()
     end
 
-    @@blacklist = [
-    ]
-
-    @@autoload_proc = nil
+    @@autoload_running_p = false
     def autoload()
       return false if autocompile_running?
-      if autoload_running?
-        @@autoload_proc.call()
-        return true 
-      end
-
-      # Marshal.load で定数を参照したときに、クラス定義が走る可能性があるので、
-      # @@autoload_proc を定義する前に、Marshal.load を呼び出しておく。
-      compiled = CodeManager.load_autocompiled()
-      @@autoload_proc = lambda {
-        compiled = CodeManager.load_autocompiled() unless compiled
-        return false unless compiled
-        fin = __load(compiled)
-        hook_class_definition_end(nil) if fin
-        fin
-      }
-      hook_class_definition_end(@@autoload_proc) if RUBY_VERSION == "1.9.3"
-      @@autoload_proc.call()
+      @@autoload_running_p = true
       true
-    end
-
-    def load()
-      compiled = CodeManager.load_autocompiled()
-      return false unless compiled
-      __load(compiled)
     end
 
     @@compilation_threshold = 100
@@ -62,73 +37,26 @@ module CastOff
     end
 
     @@autocompile_proc = nil
-    case RUBY_VERSION
-    when "1.9.3"
-      @@compile_auto_incremental = true
-    when "1.9.2"
-      @@compile_auto_incremental = false
-    else
-      bug()
-    end
-
     def autocompile()
       return false if autoload_running?
       return true if autocompile_running?
       class_table = {}
-      bind_table = {}
-      location_table = {}
-      #cinfo_table = {}
-      compiled = []
-      #@@autocompile_proc = lambda {|file, line, mid, bind, klass, cinfo|
-      @@autocompile_proc = lambda {|file, line, mid, bind, klass|
+      number = 0
+      @@autocompile_proc = lambda {|klass, mid, bind|
         # trace method invocation
         # TODO should handle singleton class
 
         method_table = (class_table[klass] ||= Hash.new(-1))
         count = (method_table[mid] += 1)
-        if count == 0
+        #count = @@compilation_threshold if contain_loop?(klass, mid) if count == 0
+        if count == @@compilation_threshold
           bug() unless bind.nil?
           return true # re-call this proc with binding
         end
-        if count == 1
-          #count = @@compilation_threshold if contain_loop?(klass, mid)
-          bug() unless bind.instance_of?(Binding) || bind.nil?
-          bind_table[[klass, mid]] = bind
-          begin
-            location_table[[klass, mid]] = (file =~ /\(/) ? nil : [File.expand_path(file), line]
-          rescue Errno::ENOENT 
-            location_table[[klass, mid]] = nil
-          end
-        end
-        #if cinfo
-          #table = (cinfo_table[[klass, mid]] ||= {})
-          #table[cinfo] = true
-        #end
-        if count == @@compilation_threshold && @@compile_auto_incremental
-          compiled << __autocompile(klass, mid, bind_table, location_table, compiled.size)
-        end
+        __autocompile(klass, mid, bind, (number += 1)) if bind
         false
       }
       hook_method_invocation(@@autocompile_proc)
-      at_exit do
-        hook_method_invocation(nil) # clear trace
-        unless @@compile_auto_incremental
-          targets = []
-          class_table.each do |klass, method_table|
-            method_table.each do |mid, count|
-              next unless count >= @@compilation_threshold
-              targets << [klass, mid, count]
-            end
-          end
-          #targets = sort_targets(targets, cinfo_table)
-          targets.each_with_index do |(klass, mid, count), index|
-            dlog("#{count}: #{klass} #{mid}")
-            compiled << __autocompile(klass, mid, bind_table, location_table, index)
-          end
-        end
-        compiled.compact!
-        CodeManager.dump_auto_compiled(compiled)
-      end
       true
     end
 
@@ -218,12 +146,134 @@ module CastOff
       __send__(sign, recv)
     end
 
+    def re_compile_all()
+      all = @@original_singleton_method_iseq.map{|(target, mid), v|
+        [target, mid, true]
+      } + @@original_instance_method_iseq.map{|(target, mid), v|
+        [target, mid, false]
+      }
+      all.each do |(target, mid, singleton)|
+        compilation_method_name = "compile#{singleton ? '_singleton_method' : ''}"
+        separator = singleton ? '.' : '#'
+        begin
+          CastOff.__send__(compilation_method_name, target, mid)
+        rescue ArgumentError, NameError, CompileError => e
+          # ArgumentError: dependency の Marshal.load に失敗
+          # NameError: prefetch constant での定数参照に失敗
+          # CompileError: メソッドが undef されて未定義になってしまった場合
+          vlog("Skip: #{target}#{separator}#{mid}")
+        rescue UnsupportedError => e
+          vlog("Unsupported: #{target}#{separator}#{mid} => #{e}")
+        rescue => e
+          vlog("Catch exception #{e.class}: #{e}\n#{e.backtrace.join("\n")}")
+        end
+      end
+    end
+
+    def hook_method_definition()
+      Module.class_eval do
+        def method_added(mid)
+          return unless CastOff.autoload_running? && !CastOff.compiler_running? && !CastOff.method_aliasing?
+          CastOff.replace_method_invocation(self, mid, false)
+        end
+
+        def singleton_method_added(mid)
+          return unless CastOff.autoload_running? && !CastOff.compiler_running? && !CastOff.method_aliasing?
+          CastOff.replace_method_invocation(self, mid, true)
+        end
+      end
+    end
+
+    def do_alias()
+      bug() unless block_given?
+      begin
+        bug() if method_aliasing?
+        method_aliasing(true)
+        yield
+      ensure
+        method_aliasing(false)
+      end
+    end
+
+    def restore_method(target, mid, me)
+      do_alias do
+        begin
+          target.__send__(:define_method, mid, me)
+        rescue
+          me = me.clone
+          CastOff.rewrite_rclass_of_unbound_method_object(me, target)
+          begin
+            target.__send__(:define_method, mid, me)
+          rescue => e
+            CastOff.bug("#{target}, #{mid}, #{e}:\n#{e.backtrace}")
+          end
+        end
+      end
+    end
+
+    @@mls = {}
+    def create_method_invocation_callback()
+      proc{|*args, &block|
+        hook_proc = CastOff.current_bmethod_proc()
+        current_method_id = CastOff.current_method_id()
+        target = CastOff.override_target_of_current_method(self)
+        me = @@mls[hook_proc]
+        CastOff.bug() unless me.instance_of?(UnboundMethod)
+        if target && CastOff.singleton_class?(target)
+          compilation_method_id = :compile_singleton_method
+          separator = '.'
+          singleton = true
+        else
+          compilation_method_id = :compile
+          separator = '#'
+          singleton = false
+          unless target
+            # from method object
+            methods = ObjectSpace.each_object(Method).select{|mobj| CastOff.rewrite_method_object(mobj, me, hook_proc)}
+            me = methods.find{|m| m.receiver.__id__ == self.__id__}
+            CastOff.bug() unless me.instance_of?(Method)
+            CastOff.vlog("rewrite method object #{me}")
+            return me.call(*args, &block)
+          end
+        end
+        CastOff.bug() unless CastOff.instance_bmethod_proc(target.instance_method(current_method_id)) == hook_proc
+        CastOff.restore_method(target, current_method_id, me)
+        CastOff.bug() unless CastOff.get_compilable_iseq(target, current_method_id, false)
+        begin
+          CastOff.__send__(compilation_method_id, singleton ? self : target, current_method_id)
+        rescue
+          CastOff.vlog("failed to load #{target}#{separator}#{current_method_id}")
+        end
+        target.instance_method(current_method_id).bind(self).call(*args, &block)
+      }
+    end
+
+    def replace_method_invocation(obj, mid, singleton_p)
+      iseq = get_compilable_iseq(obj, mid, singleton_p)
+      return unless iseq
+      filepath = get_iseq_filepath(iseq)
+      line_no = get_iseq_line(iseq)
+      return unless CodeManager.compiled_method_exist?(filepath, line_no)
+      target = singleton_p ? obj.singleton_class : override_target(obj, mid)
+      begin
+        original_method = target.instance_method(mid)
+      rescue => e
+        CastOff.bug(e)
+      end
+      do_alias do
+        hook_proc = create_method_invocation_callback()
+        target.__send__(:define_method, mid, &hook_proc)
+        CastOff.bug() if @@mls[hook_proc]
+        @@mls[hook_proc] = original_method
+      end
+    end
+
     def autocompile_running?
       !!@@autocompile_proc
     end
 
     def autoload_running?
-      !!@@autoload_proc
+      !!@@autoload_running_p
     end
 
     def compiler_running?
@@ -232,6 +282,10 @@ module CastOff
 
     def method_replacing?
       !!Thread.current[METHOD_REPLACING_KEY]
+    end
+
+    def method_aliasing?
+      !!Thread.current[METHOD_ALIASING_KEY]
     end
 
     private
@@ -246,6 +300,11 @@ module CastOff
       Thread.current[METHOD_REPLACING_KEY] = bool
     end
 
+    METHOD_ALIASING_KEY = :CastOffMethodAliasing
+    def method_aliasing(bool)
+      Thread.current[METHOD_ALIASING_KEY] = bool
+    end
+
     Lock = Mutex.new()
     def execute_no_hook()
       bug() unless block_given?
@@ -253,17 +312,12 @@ module CastOff
       begin
         compiler_running(true)
         hook_m = hook_method_invocation(nil)
-        hook_c = hook_class_definition_end(nil)
         yield
       ensure
         compiler_running(false)
         if hook_m
           bug() unless autocompile_running?
           hook_method_invocation(@@autocompile_proc)
-        end
-        if hook_c
-          bug() unless autoload_running?
-          hook_class_definition_end(@@autoload_proc)
         end
       end
       end
@@ -340,6 +394,7 @@ Currently, CastOff cannot compile method which source file is not exist.
       return false unless update_p
       ann = manager.load_annotation() || {}
       bug() unless ann.instance_of?(Hash)
+      warn("re-compile(#{target}#{singleton ? '.' : '#'}#{mid})")
       begin
         __send__(singleton ? 'compile_singleton_method' : 'compile', target, mid, ann, nil, true)
         vlog("re-compilation success: #{target}#{singleton ? '.' : '#'}#{mid}")
@@ -376,7 +431,8 @@ Currently, CastOff cannot compile method which source file is not exist.
         conf = Configuration.new(annotation, bind)
         union_base_configuration(conf, manager)
       end
-      vlog("use configuration #{conf}")
+      warn("compilng #{mid}...")
+      vlog("use configuration #{conf}, binding = #{!!conf.bind}")
 
       require 'cast_off/compile/namespace/uuid'
       require 'cast_off/compile/namespace/namespace'
@@ -421,82 +477,6 @@ Currently, CastOff cannot compile method which source file is not exist.
       conf
     end
 
-    @@skipped = []
-    def __load(compiled)
-      begin
-        (@@skipped + compiled.dup).each do |entry|
-          klass, mid, singleton, file, line, bind = entry
-          if @@blacklist.include?(mid)
-            compiled.delete(entry)
-            next
-          end
-          bind = bind.bind if bind
-          skip = false
-          begin
-            if singleton
-              iseq = @@original_singleton_method_iseq[[klass, mid]] || get_iseq(klass, mid, true)
-            else
-              t = override_target(klass, mid)
-              iseq = @@original_instance_method_iseq[[t, mid]] || get_iseq(klass, mid, false)
-            end
-          rescue CompileError, UnsupportedError
-            @@skipped |= [entry]
-            dlog("skip: entry = #{entry}")
-            skip = true
-          end
-          f, l = *iseq.to_a.slice(7, 2) unless skip
-          if !skip && f == file && l == line
-            begin
-              @@skipped.delete(entry)
-              if singleton
-                CastOff.compile_singleton_method(klass, mid, bind)
-              else
-                CastOff.compile(klass, mid, bind)
-              end
-              vlog("load #{klass}##{mid}")
-            rescue ArgumentError, NameError => e
-              # ArgumentError: dependency の Marshal.load に失敗
-              # NameError: prefetch constant での定数参照に失敗
-              vlog("skip: entry = #{entry[0]}#{entry[2] ? '.' : '#'}#{entry[1]}, #{e}")
-              CodeManager.delete_from_compiled(entry)
-            rescue UnsupportedError => e
-              vlog("unsupported #{klass}##{mid} => #{e}")
-              CodeManager.delete_from_compiled(entry)
-            end
-          else
-            dlog("iseq.filepath = #{f}, file = #{file}\niseq.line = #{l}, line = #{line}")
-          end
-          compiled.delete(entry)
-        end
-        if compiled.empty?
-          vlog("---------- load finish ----------") if @@skipped.empty?
-          true
-        else
-          false
-        end
-      rescue => e
-        vlog("catch exception #{e.class}: #{e}\n#{e.backtrace.join("\n")}")
-        false
-      end
-    end
-
-    s = class << BasicObject
-      self
-    end
-    continue_load = RUBY_VERSION != "1.9.3"
-    s.class_eval do
-      define_method(:method_added) do |mid|
-        return unless CastOff.respond_to?(:autoload_running?)
-        if CastOff.autoload_running? && (!@@skipped.empty? || continue_load) && !CastOff.compiler_running?
-          continue_load &= !@@autoload_proc.call()
-        end
-      end
-    end
-    #Module.class_eval do
-      #define_method(:autoload) do |*args|
-        #raise(ExecutionError.new("Currently, CastOff doesn't support Module#autoload"))
-      #end
-    #end
     Kernel.module_eval do
       def set_trace_func(*args, &p)
         raise(ExecutionError.new("Currently, CastOff doesn't support set_trace_func"))
@@ -573,21 +553,18 @@ Currently, CastOff cannot compile method which source file is not exist.
       singleton ? :singleton_method : :instance_method
     end
 
-    def __autocompile(klass, mid, bind_table, location_table, index)
+    def __autocompile(klass, mid, bind, index)
       case compilation_target_type(klass, mid)
       when :singleton_method
         singleton = true
       when :instance_method
         singleton = false
       when nil
-        return nil
+        return false
       else
         bug()
       end
       begin
-        location = location_table[[klass, mid]]
-        return nil unless location
-        bind = bind_table[[klass, mid]]
         if singleton
           CastOff.compile_singleton_method(klass, mid, bind)
         else
@@ -600,47 +577,11 @@ Currently, CastOff cannot compile method which source file is not exist.
           return nil
         end
         vlog("#{index}: compile #{klass}#{singleton ? '.' : '#'}#{mid}")
-        [klass, mid, singleton] + location + [Configuration::BindingWrapper.new(bind)] # klass, mid, file, line, binding
-      rescue UnsupportedError, CompileError => e
+        true
+      rescue UnsupportedError, CompileError, ArgumentError => e
         vlog("#{index}: failed to compile #{klass}#{singleton ? '.' : '#'}#{mid} (#{e.message})")
-        nil
+        false
       end
-    end
-
-    def __sort_targets(entry, targets, cinfo_table)
-      result = []
-      unless cinfo_table[entry]
-        result << entry
-        dlog("<< #{entry}: nil")
-        return result # FIXME
-      end
-
-      targets.each do |te|
-        bug() if entry == te
-        next unless cinfo_table[te]
-        next unless cinfo_table[te].keys.include?(entry) # entry calls te
-        next if cinfo_table[entry].keys.include?(te) # cycle
-        targets.delete(te)
-        result += __sort_targets(te, targets, cinfo_table)
-      end
-      dlog("<< #{entry}: #{cinfo_table[entry].keys}")
-      result << entry
-      result
-    end
-
-    def sort_targets(targets, cinfo_table)
-      result = []
-      counts = {}
-      targets = targets.sort{|v0, v1| v1.last <=> v0.last}
-      targets.each{|klass, mid, count| counts[[klass, mid]] = count}
-      targets = targets.map{|klass, mid, count| [klass, mid]}
-      until targets.empty?
-        entry = targets.shift
-        result += __sort_targets(entry, targets, cinfo_table)
-      end
-      result.map!{|entry| entry + [counts[entry]]}
-      bug() unless result.size == counts.size
-      result
     end
 
     def parse_sampling_table(sampling_table)
