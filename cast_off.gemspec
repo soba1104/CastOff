@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name		      = "cast_off"
-  spec.version		      = "0.4.0"
+  spec.version		      = "0.4.1"
   spec.platform		      = Gem::Platform::RUBY
   spec.summary		      = "Compiler for Ruby1.9.3"
   spec.description	      = <<-EOS
@@ -27,6 +27,6 @@ So, if you attempt to use CastOff, please install CastOff under Ruby1.9.3 runtim
   spec.email		      = 'shiba@rvm.jp'
   spec.homepage		      = 'http://github.com/soba1104/CastOff'
   #spec.rubyforge_project     = 'cast_off'
-  spec.required_ruby_version  = '= 1.9.3'
+  spec.required_ruby_version  = '>= 1.9.3'
 end
 
